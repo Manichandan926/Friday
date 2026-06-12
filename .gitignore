@@ -1,0 +1,38 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Python caching
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Databases
+database/*.db
+database/*.sqlite
+database/backups/
+
+# Logs
+logs/
+*.log
+
+# Configuration (keep .env.example)
+.env
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Google API credentials & tokens
+credentials.json
+token.json
+client_secret_*.json
+fridaydesktop.json
+
+
+
