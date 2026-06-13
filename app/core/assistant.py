@@ -162,6 +162,16 @@ class FridayAssistant:
             MemoryManager.add_message(conversation_id, "assistant", reply)
             return reply
 
+        # direct shell command: /run <command>
+        if cleaned_msg.startswith("/run "):
+            from app.core.shell import execute_command
+            MemoryManager.add_message(conversation_id, "user", user_message)
+            cmd = user_message.split(" ", 1)[1].strip()
+            success, output = execute_command(cmd)
+            reply = f"$ {cmd}\n{output}"
+            MemoryManager.add_message(conversation_id, "assistant", reply)
+            return reply
+
         # help
         if cleaned_msg in ["/help", "help", "/commands"]:
             MemoryManager.add_message(conversation_id, "user", user_message)
@@ -176,6 +186,7 @@ class FridayAssistant:
                 "| `/deadlines` | Upcoming application deadlines |\n"
                 "| `/interviews` | Active interviews |\n"
                 "| `/scan` | Scan web for new internship listings |\n"
+                "| `/run command` | Run a safe shell command |\n"
                 "| `/system` | System info (RAM, CPU, disk) |\n"
                 "| `/knowledge` | View knowledge vault |\n"
                 "| `/learn cat \\| title \\| content` | Add to knowledge vault |\n"
@@ -200,6 +211,24 @@ class FridayAssistant:
 
         # check if query matches any tool — inject real data into LLM context
         tool_context = route_to_tools(user_message)
+
+        # if no tool matched and it looks like a system/process/terminal question,
+        # use the shell agent to autonomously pick and run a command
+        shell_keywords = [
+            "process", "running", "what is using", "which app", "top process",
+            "high memory", "high cpu", "why is", "network", "ip address",
+            "wifi", "battery", "temperature", "sensor", "usb", "pci",
+            "installed", "version of", "where is", "find file", "disk usage",
+            "free space", "who is logged", "open ports", "listening",
+        ]
+        if not tool_context and any(kw in cleaned_msg for kw in shell_keywords):
+            try:
+                from app.agents.shell_agent import ShellAgent
+                shell_reply = await ShellAgent().answer_with_shell(user_message)
+                if shell_reply and "blocked" not in shell_reply.lower():
+                    tool_context = f"[SHELL OUTPUT]\n{shell_reply}"
+            except Exception as e:
+                logger.error(f"Shell agent failed: {e}")
 
         history = MemoryManager.get_messages(conversation_id)
         messages = self._build_prompt_context(history, tool_context)
@@ -232,11 +261,12 @@ class FridayAssistant:
             "1. NEVER invent, fabricate, or hallucinate data. If you don't have information, say so.\n"
             "2. NEVER make up emails, system stats, kernel versions, or notifications.\n"
             "3. NEVER pretend to execute system commands (kernel updates, reboots, patches).\n"
-            "4. You CANNOT run shell commands. You can only read data provided to you.\n"
+            "4. You have LIMITED read-only terminal access. Shell output appears in TOOL DATA when available.\n"
             "5. Only reference emails, tasks, or applications if they appear in the TOOL DATA below.\n"
             "6. If no tool data is provided for a topic, say 'I don't have that data right now.'\n"
             "7. For general knowledge questions (coding, concepts, etc.), answer normally and helpfully.\n"
             "8. Be concise and direct. No filler.\n"
+            "9. When SHELL OUTPUT is provided, interpret the terminal output accurately for the user.\n"
         )
 
         if memory_str:
