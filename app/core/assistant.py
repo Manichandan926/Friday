@@ -172,6 +172,23 @@ class FridayAssistant:
             MemoryManager.add_message(conversation_id, "assistant", reply)
             return reply
 
+        # notifications
+        if cleaned_msg in ["/notifications", "/alerts", "notifications"]:
+            MemoryManager.add_message(conversation_id, "user", user_message)
+            notifs = MemoryManager.get_notifications(limit=20)
+            if not notifs:
+                reply = "No notifications."
+            else:
+                unread = sum(1 for n in notifs if not n.is_read)
+                reply = f"### Notifications ({unread} unread)\n\n"
+                for n in notifs:
+                    marker = "🔵" if not n.is_read else "⚪"
+                    time_str = n.created_at.strftime("%b %d %H:%M")
+                    reply += f"{marker} **{n.title}** ({time_str})\n{n.message}\n\n"
+                MemoryManager.mark_notifications_read()
+            MemoryManager.add_message(conversation_id, "assistant", reply)
+            return reply
+
         # help
         if cleaned_msg in ["/help", "help", "/commands"]:
             MemoryManager.add_message(conversation_id, "user", user_message)
@@ -187,6 +204,7 @@ class FridayAssistant:
                 "| `/interviews` | Active interviews |\n"
                 "| `/scan` | Scan web for new internship listings |\n"
                 "| `/run command` | Run a safe shell command |\n"
+                "| `/notifications` | View proactive alerts |\n"
                 "| `/system` | System info (RAM, CPU, disk) |\n"
                 "| `/knowledge` | View knowledge vault |\n"
                 "| `/learn cat \\| title \\| content` | Add to knowledge vault |\n"
@@ -215,11 +233,18 @@ class FridayAssistant:
         # if no tool matched and it looks like a system/process/terminal question,
         # use the shell agent to autonomously pick and run a command
         shell_keywords = [
+            # process / memory questions
             "process", "running", "what is using", "which app", "top process",
-            "high memory", "high cpu", "why is", "network", "ip address",
-            "wifi", "battery", "temperature", "sensor", "usb", "pci",
+            "high memory", "high cpu", "why is", "spike", "consuming",
+            "eating", "hogging", "heavy", "slow", "lagging", "using most",
+            "using all", "what's eating", "what is eating", "resource",
+            # hardware
+            "network", "ip address", "wifi", "battery", "charging",
+            "temperature", "sensor", "thermal", "fan", "usb", "pci",
+            # files / packages
             "installed", "version of", "where is", "find file", "disk usage",
             "free space", "who is logged", "open ports", "listening",
+            "storage", "folder size", "largest",
         ]
         if not tool_context and any(kw in cleaned_msg for kw in shell_keywords):
             try:
@@ -256,17 +281,23 @@ class FridayAssistant:
         memory_str = "\n".join([f"- [{item.category}]: {item.content}" for item in memories])
 
         system_prompt = (
-            "You are FRIDAY, a personal assistant running on the user's Linux laptop.\n\n"
-            "CRITICAL RULES:\n"
-            "1. NEVER invent, fabricate, or hallucinate data. If you don't have information, say so.\n"
-            "2. NEVER make up emails, system stats, kernel versions, or notifications.\n"
-            "3. NEVER pretend to execute system commands (kernel updates, reboots, patches).\n"
-            "4. You have LIMITED read-only terminal access. Shell output appears in TOOL DATA when available.\n"
-            "5. Only reference emails, tasks, or applications if they appear in the TOOL DATA below.\n"
-            "6. If no tool data is provided for a topic, say 'I don't have that data right now.'\n"
-            "7. For general knowledge questions (coding, concepts, etc.), answer normally and helpfully.\n"
-            "8. Be concise and direct. No filler.\n"
-            "9. When SHELL OUTPUT is provided, interpret the terminal output accurately for the user.\n"
+            "You are FRIDAY, a personal AI assistant built with Python and C, "
+            "running on the user's Linux laptop (Fedora KDE).\n\n"
+            "ABSOLUTE RULES — VIOLATION = FAILURE:\n"
+            "1. NEVER invent, fabricate, or hallucinate ANY data whatsoever.\n"
+            "2. NEVER create fake terminal output, process lists, PIDs, or command results.\n"
+            "3. NEVER fabricate shell output like '$ ps aux' or '$ top' — if no SHELL OUTPUT appears \n"
+            "   in TOOL DATA below, you DO NOT have terminal data. Say 'Let me check that for you' \n"
+            "   or 'I don't have that data right now.'\n"
+            "4. NEVER make up emails, system stats, kernel versions, or notifications.\n"
+            "5. You have LIMITED read-only terminal access via a sandboxed executor. \n"
+            "   Real shell output appears in TOOL DATA when the system ran a command.\n"
+            "6. Only reference data if it appears in the TOOL DATA section below.\n"
+            "7. If asked about your tech stack: you are built with Python (LLM, DB, UI) \n"
+            "   and C (native system monitor daemon for fast /proc reads via Unix socket).\n"
+            "8. For general knowledge questions (coding, concepts), answer normally.\n"
+            "9. Be concise and direct. No filler. No apologies.\n"
+            "10. When SHELL OUTPUT is provided in TOOL DATA, interpret it accurately.\n"
         )
 
         if memory_str:

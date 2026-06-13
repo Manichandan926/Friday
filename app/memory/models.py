@@ -106,3 +106,15 @@ class Project(Base):
     progress: Mapped[int] = mapped_column(Integer, default=0)  # 0-100
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+class Notification(Base):
+    """Proactive alert history."""
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(255))
+    message: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(100), default="general")  # deadline, email, system, task
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+

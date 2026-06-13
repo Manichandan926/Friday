@@ -67,6 +67,19 @@ def main() -> None:
     # enforce file permissions (chmod 600)
     secure_environment_files()
     
+    # start native C monitor daemon (if compiled)
+    try:
+        from app.core.native_bridge import is_daemon_running, start_daemon
+        if not is_daemon_running():
+            if start_daemon():
+                logger.info("Native system monitor daemon started.")
+            else:
+                logger.info("Native monitor not available, using Python fallback.")
+        else:
+            logger.info("Native system monitor daemon already running.")
+    except Exception as e:
+        logger.debug(f"Native monitor init skipped: {e}")
+    
     # start scheduler for periodic jobs
     scheduler = FridayScheduler()
     scheduler.start()

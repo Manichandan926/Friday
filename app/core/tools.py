@@ -1,6 +1,9 @@
 """
 Built-in tools that return real system/database data.
 Each tool returns a plain-text string that gets injected into LLM context.
+
+Uses native C monitor daemon when available (via Unix socket).
+Falls back to Python /proc reading otherwise.
 """
 import os
 import json
@@ -9,8 +12,8 @@ from app.memory.memory_manager import MemoryManager
 from app.core.logger import logger
 
 
-def get_system_info() -> str:
-    """Read actual system stats from /proc and os."""
+def _python_sysinfo() -> str:
+    """Fallback: read system stats from /proc using Python."""
     lines = []
 
     try:
@@ -77,6 +80,101 @@ def get_system_info() -> str:
         pass
 
     return "\n".join(lines) if lines else "Could not read system info."
+
+
+def get_system_info() -> str:
+    """Get system info — uses native C daemon if available, else Python fallback."""
+    try:
+        from app.core.native_bridge import get_sysinfo_native
+        native = get_sysinfo_native()
+        if native:
+            return native.strip()
+    except Exception:
+        pass
+
+    return _python_sysinfo()
+
+
+def get_top_processes() -> str:
+    """Get top processes by memory — native daemon or shell fallback."""
+    try:
+        from app.core.native_bridge import get_procs_native
+        native = get_procs_native()
+        if native:
+            return native.strip()
+    except Exception:
+        pass
+
+    # fallback to subprocess
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["ps", "aux", "--sort=-%mem"],
+            capture_output=True, text=True, timeout=3
+        )
+        lines = result.stdout.strip().splitlines()
+        return "\n".join(lines[:16])
+    except Exception:
+        return "Could not retrieve process list."
+
+
+def get_battery_info() -> str:
+    """Get battery status — native daemon or /sys fallback."""
+    try:
+        from app.core.native_bridge import get_battery_native
+        native = get_battery_native()
+        if native:
+            return native.strip()
+    except Exception:
+        pass
+
+    # Python fallback
+    try:
+        cap = open("/sys/class/power_supply/BAT0/capacity").read().strip()
+        status = open("/sys/class/power_supply/BAT0/status").read().strip()
+        return f"Battery: {cap}% ({status})"
+    except Exception:
+        return "No battery detected."
+
+
+def get_network_info() -> str:
+    """Get network interfaces — native daemon or ip command fallback."""
+    try:
+        from app.core.native_bridge import get_network_native
+        native = get_network_native()
+        if native:
+            return native.strip()
+    except Exception:
+        pass
+
+    import subprocess
+    try:
+        result = subprocess.run(["ip", "-brief", "addr"], capture_output=True, text=True, timeout=3)
+        return result.stdout.strip() or "No network info."
+    except Exception:
+        return "Could not read network info."
+
+
+def get_temperature_info() -> str:
+    """Get thermal data — native daemon or /sys fallback."""
+    try:
+        from app.core.native_bridge import get_temps_native
+        native = get_temps_native()
+        if native:
+            return native.strip()
+    except Exception:
+        pass
+
+    # Python fallback
+    lines = []
+    for i in range(8):
+        try:
+            temp = int(open(f"/sys/class/thermal/thermal_zone{i}/temp").read().strip()) / 1000
+            zone = open(f"/sys/class/thermal/thermal_zone{i}/type").read().strip()
+            lines.append(f"{zone}: {temp:.1f}°C")
+        except Exception:
+            break
+    return "\n".join(lines) if lines else "No thermal sensors found."
 
 
 def get_email_summary() -> str:
@@ -287,9 +385,30 @@ def get_projects_summary() -> str:
 TOOL_ROUTES = {
     "system": {
         "keywords": ["ram", "cpu", "memory usage", "disk", "uptime", "kernel", "system info",
-                      "system status", "what is my ram", "how much ram", "system"],
+                      "system status", "what is my ram", "how much ram", "system", "monitor system"],
         "handler": get_system_info,
         "label": "SYSTEM INFO"
+    },
+    "processes": {
+        "keywords": ["process", "top process", "what is using", "which app", "using most",
+                      "high memory", "ram spike", "memory spike"],
+        "handler": get_top_processes,
+        "label": "TOP PROCESSES"
+    },
+    "battery": {
+        "keywords": ["battery", "charging", "charge level", "power"],
+        "handler": get_battery_info,
+        "label": "BATTERY"
+    },
+    "network": {
+        "keywords": ["network", "wifi", "ip address", "internet", "connected", "ethernet"],
+        "handler": get_network_info,
+        "label": "NETWORK"
+    },
+    "temperature": {
+        "keywords": ["temperature", "thermal", "temp", "overheating", "hot", "fan"],
+        "handler": get_temperature_info,
+        "label": "TEMPERATURE"
     },
     "emails": {
         "keywords": ["email", "inbox", "mail", "gmail", "unread", "messages"],

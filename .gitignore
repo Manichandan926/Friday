@@ -34,5 +34,8 @@ token.json
 client_secret_*.json
 fridaydesktop.json
 
-
+# Native C binaries (compiled locally)
+native/friday_monitor
+*.o
+/tmp/friday_monitor.sock
 

@@ -12,6 +12,8 @@ from app.ui.views.chat_view import ChatView
 from app.ui.views.emails_view import EmailsView
 from app.ui.views.memory_view import MemoryView
 from app.ui.views.tasks_view import TasksView
+from app.ui.views.knowledge_view import KnowledgeView
+from app.ui.views.projects_view import ProjectsView
 from app.ui.views.settings_view import SettingsView
 from app.core.logger import logger
 
@@ -78,6 +80,8 @@ class MainWindow(QMainWindow):
             ("Chat", ChatView),
             ("Emails", EmailsView),
             ("Tasks", TasksView),
+            ("Knowledge", KnowledgeView),
+            ("Projects", ProjectsView),
             ("Memory", MemoryView),
             ("Settings", SettingsView)
         ]

@@ -13,16 +13,27 @@ TIMEOUT = 5
 
 # commands that are always safe to run (read-only system queries)
 SAFE_COMMANDS = {
+    # system monitoring
     "ps", "top", "htop", "free", "df", "du", "uname", "uptime", "who", "whoami",
-    "hostname", "date", "cal", "lsblk", "lscpu", "lsmem", "ip", "ifconfig",
-    "nmcli", "ping", "nslookup", "dig", "traceroute",
+    "hostname", "date", "cal", "lsblk", "lscpu", "lsmem", "vmstat", "iostat", "sar",
+    # hardware
+    "sensors", "lsusb", "lspci", "lshw", "dmidecode", "acpi", "upower",
+    # network
+    "ip", "ifconfig", "nmcli", "ping", "nslookup", "dig", "traceroute",
+    "ss", "netstat", "iwconfig", "iw",
+    # files
     "cat", "head", "tail", "less", "wc", "file", "stat", "ls", "find", "which",
-    "whereis", "type", "echo", "env", "printenv",
+    "whereis", "type", "echo", "env", "printenv", "readlink", "realpath",
+    "md5sum", "sha256sum", "strings",
+    # development
     "python3", "python", "java", "javac", "gcc", "g++", "node", "npm", "cargo",
-    "git", "pip", "pip3",
-    "systemctl", "journalctl",
-    "sensors", "lsusb", "lspci",
+    "git", "pip", "pip3", "rustc", "go",
+    # system services
+    "systemctl", "journalctl", "loginctl", "timedatectl", "hostnamectl",
+    # display
     "neofetch", "screenfetch", "fastfetch",
+    # process inspection
+    "lsof", "pgrep", "pmap", "strace",
 }
 
 # patterns that should NEVER be allowed

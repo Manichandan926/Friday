@@ -1,0 +1,16 @@
+[Unit]
+Description=FRIDAY AI Personal Assistant
+After=network.target graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/Projects/FRIDAY/.venv/bin/python %h/Projects/FRIDAY/main.py
+WorkingDirectory=%h/Projects/FRIDAY
+Restart=on-failure
+RestartSec=5
+Environment=DISPLAY=:0
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%U/bus
+
+[Install]
+WantedBy=default.target

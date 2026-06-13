@@ -85,13 +85,22 @@ class MemoryAgent:
                 cat = item.get("category")
                 content = item.get("content")
                 if cat and content:
-                    # skip if it looks like hallucinated system data
+                    # skip if it looks like hallucinated system data or command context
                     skip_phrases = [
-                        "kernel", "ram used", "disk space", "uptime",
-                        "cpu", "load average", "fedora 37", "16 gb"
+                        "kernel", "ram used", "disk space", "uptime", "cpu",
+                        "load average", "fedora", "16 gb", "8 gb", "7712",
+                        "monitor", "system info", "process", "battery",
+                        "network", "terminal", "shell", "command",
+                        "temperature", "sensor", "hostname", "linux",
+                        "python", "coded with", "built with", "using a monitor",
+                        "mb /", "gb /", "mb used", "gb used",
                     ]
                     if any(p in content.lower() for p in skip_phrases):
-                        logger.debug(f"MemoryAgent: skipped likely hallucinated fact: {content}")
+                        logger.debug(f"MemoryAgent: skipped system-related fact: {content}")
+                        continue
+
+                    # skip very short or generic extractions
+                    if len(content) < 10:
                         continue
 
                     is_dup = any(

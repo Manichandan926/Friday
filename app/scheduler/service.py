@@ -40,6 +40,24 @@ class FridayScheduler:
             id="db_backup",
             replace_existing=True
         )
+
+        # Proactive deadline monitor every 30 minutes
+        self.scheduler.add_job(
+            self._proactive_deadline_check,
+            "interval",
+            minutes=30,
+            id="deadline_monitor",
+            replace_existing=True
+        )
+
+        # System health monitor every 10 minutes
+        self.scheduler.add_job(
+            self._system_health_check,
+            "interval",
+            minutes=10,
+            id="system_health",
+            replace_existing=True
+        )
         
         self.scheduler.start()
         logger.info("FRIDAY background scheduler started.")
@@ -202,3 +220,91 @@ class FridayScheduler:
         logger.info("Executing scheduled database backup...")
         from app.memory.backup import backup_db
         backup_db()
+
+    def _proactive_deadline_check(self) -> None:
+        """Monitor application deadlines and notify user about critical ones."""
+        logger.debug("Proactive monitor: checking application deadlines...")
+        try:
+            now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+            apps = MemoryManager.get_applications()
+
+            for app in apps:
+                if not app.deadline or app.status in ("rejected", "offer"):
+                    continue
+
+                delta = app.deadline - now
+                days_left = delta.days
+                alert_key = f"deadline_{app.id}_{days_left}"
+
+                if alert_key in self._notified_tasks:
+                    continue
+
+                if days_left < 0:
+                    title = f"⚠ DEADLINE PASSED: {app.company}"
+                    msg = f"{app.role} deadline was {abs(days_left)} days ago!"
+                    self._send_notification(title, msg)
+                    MemoryManager.add_notification(title, msg, category="deadline")
+                    self._notified_tasks.add(alert_key)
+                elif days_left <= 1:
+                    title = f"🔴 CRITICAL: {app.company}"
+                    msg = f"{app.role} deadline is TOMORROW!"
+                    self._send_notification(title, msg)
+                    MemoryManager.add_notification(title, msg, category="deadline")
+                    self._notified_tasks.add(alert_key)
+                elif days_left <= 3:
+                    title = f"🟡 URGENT: {app.company}"
+                    msg = f"{app.role} deadline in {days_left} days."
+                    self._send_notification(title, msg)
+                    MemoryManager.add_notification(title, msg, category="deadline")
+                    self._notified_tasks.add(alert_key)
+
+        except Exception as e:
+            logger.error(f"Proactive deadline check failed: {e}")
+
+    def _system_health_check(self) -> None:
+        """Monitor system resources and alert on critical levels."""
+        logger.debug("Proactive monitor: checking system health...")
+        try:
+            import os
+
+            # RAM check
+            meminfo = {}
+            with open("/proc/meminfo", "r") as f:
+                for line in f:
+                    parts = line.split()
+                    key = parts[0].rstrip(":")
+                    if key in ("MemTotal", "MemAvailable"):
+                        meminfo[key] = int(parts[1])
+
+            if meminfo:
+                total = meminfo.get("MemTotal", 1)
+                avail = meminfo.get("MemAvailable", total)
+                usage_pct = round((1 - avail / total) * 100, 1)
+
+                if usage_pct > 90 and "ram_critical" not in self._notified_tasks:
+                    title = "🔴 RAM Critical"
+                    msg = f"RAM usage at {usage_pct}%. Close some applications."
+                    self._send_notification(title, msg)
+                    MemoryManager.add_notification(title, msg, category="system")
+                    self._notified_tasks.add("ram_critical")
+                elif usage_pct < 80:
+                    self._notified_tasks.discard("ram_critical")
+
+            # Disk check
+            st = os.statvfs("/")
+            total_gb = (st.f_blocks * st.f_frsize) / (1024**3)
+            free_gb = (st.f_bavail * st.f_frsize) / (1024**3)
+            disk_pct = round((1 - free_gb / total_gb) * 100, 1)
+
+            if disk_pct > 90 and "disk_critical" not in self._notified_tasks:
+                title = "🔴 Disk Space Critical"
+                msg = f"Disk usage at {disk_pct}%. Only {round(free_gb, 1)} GB free."
+                self._send_notification(title, msg)
+                MemoryManager.add_notification(title, msg, category="system")
+                self._notified_tasks.add("disk_critical")
+            elif disk_pct < 85:
+                self._notified_tasks.discard("disk_critical")
+
+        except Exception as e:
+            logger.error(f"System health check failed: {e}")
+

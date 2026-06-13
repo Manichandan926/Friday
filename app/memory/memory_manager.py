@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List, Optional
 from sqlalchemy import select
 from app.memory.database import get_db_session
-from app.memory.models import Conversation, Message, MemoryItem, Email, Task, Application, KnowledgeItem, Project
+from app.memory.models import Conversation, Message, MemoryItem, Email, Task, Application, KnowledgeItem, Project, Notification
 
 class MemoryManager:
     # --- Conversations ---
@@ -253,3 +253,35 @@ class MemoryManager:
                 session.flush()
                 return project
             return None
+
+    # --- Notifications ---
+
+    @staticmethod
+    def add_notification(title: str, message: str, category: str = "general") -> Notification:
+        with get_db_session() as session:
+            notif = Notification(title=title, message=message, category=category)
+            session.add(notif)
+            session.flush()
+            return notif
+
+    @staticmethod
+    def get_notifications(unread_only: bool = False, limit: int = 50) -> List[Notification]:
+        with get_db_session() as session:
+            stmt = select(Notification)
+            if unread_only:
+                stmt = stmt.where(Notification.is_read == False)
+            stmt = stmt.order_by(Notification.created_at.desc()).limit(limit)
+            return list(session.scalars(stmt).all())
+
+    @staticmethod
+    def mark_notifications_read() -> int:
+        with get_db_session() as session:
+            unread = session.scalars(
+                select(Notification).where(Notification.is_read == False)
+            ).all()
+            count = 0
+            for n in unread:
+                n.is_read = True
+                count += 1
+            session.flush()
+            return count
