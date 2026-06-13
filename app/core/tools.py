@@ -344,6 +344,12 @@ def get_memory_facts() -> str:
     return "\n".join(lines)
 
 
+def get_system_time() -> str:
+    """Get the current system date and time."""
+    now = datetime.datetime.now().astimezone()
+    return now.strftime("%A, %B %d, %Y at %I:%M:%S %p %Z")
+
+
 def get_knowledge_items() -> str:
     """Pull stored knowledge vault items."""
     items = MemoryManager.get_knowledge_items()
@@ -447,6 +453,11 @@ TOOL_ROUTES = {
                       "what have you learned"],
         "handler": get_memory_facts,
         "label": "MEMORY"
+    },
+    "time": {
+        "keywords": ["time", "date", "clock", "what day is it", "current date"],
+        "handler": get_system_time,
+        "label": "SYSTEM TIME"
     }
 }
 

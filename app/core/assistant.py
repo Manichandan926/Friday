@@ -6,7 +6,8 @@ from app.core.logger import logger
 from app.core.tools import (
     route_to_tools, get_tasks_summary, get_email_summary,
     get_system_info, get_deadlines_summary, get_interviews_summary,
-    get_knowledge_items, get_projects_summary, get_applications_summary
+    get_knowledge_items, get_projects_summary, get_applications_summary,
+    get_system_time
 )
 
 class FridayAssistant:
@@ -87,6 +88,13 @@ class FridayAssistant:
         if cleaned_msg in ["/system", "system info", "system status"]:
             MemoryManager.add_message(conversation_id, "user", user_message)
             reply = get_system_info()
+            MemoryManager.add_message(conversation_id, "assistant", reply)
+            return reply
+
+        # system time
+        if cleaned_msg in ["/time", "/date", "what time is it", "current time", "what is the time"]:
+            MemoryManager.add_message(conversation_id, "user", user_message)
+            reply = get_system_time()
             MemoryManager.add_message(conversation_id, "assistant", reply)
             return reply
 
@@ -206,6 +214,7 @@ class FridayAssistant:
                 "| `/run command` | Run a safe shell command |\n"
                 "| `/notifications` | View proactive alerts |\n"
                 "| `/system` | System info (RAM, CPU, disk) |\n"
+                "| `/time` | Show current system date and time |\n"
                 "| `/knowledge` | View knowledge vault |\n"
                 "| `/learn cat \\| title \\| content` | Add to knowledge vault |\n"
                 "| `/search query` | Search knowledge vault |\n"
