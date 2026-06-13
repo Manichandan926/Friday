@@ -76,9 +76,21 @@ def is_command_safe(command: str) -> Tuple[bool, str]:
     """
     Validate if a shell command is safe to execute.
     Returns (is_safe, reason).
+
+    Uses native C validator when available (10-50x faster),
+    falls back to Python regex validation otherwise.
     """
     if not command or not command.strip():
         return False, "Empty command."
+
+    # try native C validator first (binary search + strstr, no regex)
+    try:
+        from app.core.fast_ops import is_command_safe_native
+        result = is_command_safe_native(command)
+        if result is not None:
+            return result
+    except Exception:
+        pass
 
     cmd_stripped = command.strip()
 

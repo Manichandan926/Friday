@@ -262,48 +262,75 @@ class FridayScheduler:
             logger.error(f"Proactive deadline check failed: {e}")
 
     def _system_health_check(self) -> None:
-        """Monitor system resources and alert on critical levels."""
+        """Monitor system resources using native C daemon. Falls back to /proc."""
         logger.debug("Proactive monitor: checking system health...")
         try:
-            import os
+            # prefer native C daemon (data already cached, zero /proc overhead)
+            health = None
+            try:
+                from app.core.native_bridge import get_health_native
+                health = get_health_native()
+            except Exception:
+                pass
 
-            # RAM check
-            meminfo = {}
-            with open("/proc/meminfo", "r") as f:
-                for line in f:
-                    parts = line.split()
-                    key = parts[0].rstrip(":")
-                    if key in ("MemTotal", "MemAvailable"):
-                        meminfo[key] = int(parts[1])
+            if health:
+                usage_pct = health.get("ram_pct", 0)
+                disk_pct = health.get("disk_pct", 0)
+                bat_pct = health.get("bat_pct", None)
+                bat_status = health.get("bat_status", "")
+            else:
+                # fallback: read /proc directly
+                import os
+                meminfo = {}
+                with open("/proc/meminfo", "r") as f:
+                    for line in f:
+                        parts = line.split()
+                        key = parts[0].rstrip(":")
+                        if key in ("MemTotal", "MemAvailable"):
+                            meminfo[key] = int(parts[1])
 
-            if meminfo:
                 total = meminfo.get("MemTotal", 1)
                 avail = meminfo.get("MemAvailable", total)
                 usage_pct = round((1 - avail / total) * 100, 1)
 
-                if usage_pct > 90 and "ram_critical" not in self._notified_tasks:
-                    title = "🔴 RAM Critical"
-                    msg = f"RAM usage at {usage_pct}%. Close some applications."
-                    self._send_notification(title, msg)
-                    MemoryManager.add_notification(title, msg, category="system")
-                    self._notified_tasks.add("ram_critical")
-                elif usage_pct < 80:
-                    self._notified_tasks.discard("ram_critical")
+                st = os.statvfs("/")
+                total_gb = (st.f_blocks * st.f_frsize) / (1024**3)
+                free_gb = (st.f_bavail * st.f_frsize) / (1024**3)
+                disk_pct = round((1 - free_gb / total_gb) * 100, 1)
 
-            # Disk check
-            st = os.statvfs("/")
-            total_gb = (st.f_blocks * st.f_frsize) / (1024**3)
-            free_gb = (st.f_bavail * st.f_frsize) / (1024**3)
-            disk_pct = round((1 - free_gb / total_gb) * 100, 1)
+                bat_pct = None
+                bat_status = ""
 
+            # RAM alert
+            if usage_pct > 90 and "ram_critical" not in self._notified_tasks:
+                title = "🔴 RAM Critical"
+                msg = f"RAM usage at {usage_pct}%. Close some applications."
+                self._send_notification(title, msg)
+                MemoryManager.add_notification(title, msg, category="system")
+                self._notified_tasks.add("ram_critical")
+            elif usage_pct < 80:
+                self._notified_tasks.discard("ram_critical")
+
+            # Disk alert
             if disk_pct > 90 and "disk_critical" not in self._notified_tasks:
                 title = "🔴 Disk Space Critical"
-                msg = f"Disk usage at {disk_pct}%. Only {round(free_gb, 1)} GB free."
+                msg = f"Disk usage at {disk_pct}%."
                 self._send_notification(title, msg)
                 MemoryManager.add_notification(title, msg, category="system")
                 self._notified_tasks.add("disk_critical")
             elif disk_pct < 85:
                 self._notified_tasks.discard("disk_critical")
+
+            # Battery alert (only from native daemon)
+            if bat_pct is not None and bat_status == "Discharging":
+                if bat_pct < 15 and "bat_critical" not in self._notified_tasks:
+                    title = "🔴 Battery Critical"
+                    msg = f"Battery at {int(bat_pct)}% and discharging. Plug in now."
+                    self._send_notification(title, msg)
+                    MemoryManager.add_notification(title, msg, category="system")
+                    self._notified_tasks.add("bat_critical")
+                elif bat_pct > 25:
+                    self._notified_tasks.discard("bat_critical")
 
         except Exception as e:
             logger.error(f"System health check failed: {e}")
