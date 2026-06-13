@@ -250,12 +250,19 @@ class FridayAssistant:
             # hardware
             "network", "ip address", "wifi", "battery", "charging",
             "temperature", "sensor", "thermal", "fan", "usb", "pci",
-            # files / packages
+            # files / packages / file writes
             "installed", "version of", "where is", "find file", "disk usage",
             "free space", "who is logged", "open ports", "listening",
             "storage", "folder size", "largest",
+            "create file", "write file", "touch", "make file", "create a file",
+            "save to file", "mkdir", "make directory", "write to",
         ]
-        if not tool_context and any(kw in cleaned_msg for kw in shell_keywords):
+        # check if it contains file operation verbs and nouns (e.g. write "content" to file.txt)
+        file_verbs = ["create", "write", "touch", "make", "save", "mkdir", "echo"]
+        file_nouns = ["file", "directory", "folder", "txt", "md", "path", "downloads", "documents", "desktop"]
+        has_file_op = any(v in cleaned_msg for v in file_verbs) and any(n in cleaned_msg for n in file_nouns)
+
+        if not tool_context and (any(kw in cleaned_msg for kw in shell_keywords) or has_file_op):
             try:
                 from app.agents.shell_agent import ShellAgent
                 shell_reply = await ShellAgent().answer_with_shell(user_message)
@@ -299,10 +306,10 @@ class FridayAssistant:
             "   in TOOL DATA below, you DO NOT have terminal data. Say 'Let me check that for you' \n"
             "   or 'I don't have that data right now.'\n"
             "4. NEVER make up emails, system stats, kernel versions, or notifications.\n"
-            "5. You have LIMITED read-only terminal access via a sandboxed executor. You CANNOT \n"
-            "   create files, write to the filesystem, or execute state-modifying actions. \n"
-            "   If asked to write a file, create a directory, or modify settings, you MUST decline \n"
-            "   and explain that you only have read-only sandboxed system status access. \n"
+            "5. You have sandboxed terminal access. You CAN create files, write text, and \n"
+            "   make directories locally in the user's home or current workspace using touch, mkdir, \n"
+            "   and standard redirects (e.g. echo 'text' > file). You CANNOT touch system files or \n"
+            "   directories (like /etc, /var, /usr) or execute destructive actions. \n"
             "   Real shell output appears in TOOL DATA when the system ran a command.\n"
             "6. Only reference data if it appears in the TOOL DATA section below.\n"
             "7. If asked about your tech stack: you are built with Python (LLM, DB, UI) \n"
