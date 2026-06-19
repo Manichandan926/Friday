@@ -107,6 +107,26 @@ Optimization is a first-class feature.
 
 ---
 
+## Principle 5
+
+Brain Levels Architecture
+
+To balance capability with local hardware constraints (like 8GB laptops), FRIDAY uses a tiered brain architecture:
+
+### Level 1: Cloud
+- **Models**: Groq, Gemini, OpenAI APIs
+- **Purpose**: Complex reasoning, large summaries, execution planning
+
+### Level 2: Local Tiny Model (2B–4B)
+- **Models**: Qwen 2.5 1.5B, Gemma 2B, Phi-3 Mini (via Q4 GGUF/Ollama)
+- **Purpose**: Intent Classification, Tool Routing, Task Extraction
+
+### Level 3: Pure Algorithms
+- **Logic**: Regex, Trie, State Machines, Rules
+- **Purpose**: System queries, device commands, predefined known workflows
+
+---
+
 # PHASE 0
 # Foundation (Current)
 
@@ -249,6 +269,27 @@ Career
 Success Criteria:
 
 FRIDAY becomes primary knowledge manager.
+
+---
+
+# PHASE 2.5
+# Core Infrastructure
+
+Build these fundamental abstractions now, allowing future hardware and devices to easily plug in:
+
+```text
+Event Bus
+Plugin Manager
+Policy Engine
+Permission System
+Device Abstraction Layer
+```
+
+Why? Because later, a `Light Bulb`, `Door Lock`, `Camera`, or `NAS` all become simply `device.execute(action)` through a common abstraction without rewriting the core.
+
+Success Criteria:
+
+Core systems are decoupled and fully event-driven.
 
 ---
 
@@ -428,12 +469,17 @@ Architecture:
 ```text
 Camera
 ↓
-Vision Pipeline
+Motion Detection (Lightweight)
+↓
+Only if motion detected
+↓
+Vision Analysis (Heavy AI)
 ↓
 SecurityAgent
 ↓
 Event Bus
 ```
+*Note: This drastically reduces compute overhead, preventing the CPU from maxing out.*
 
 Success Criteria:
 
