@@ -62,10 +62,19 @@ class ActorSystem:
 
     async def send(self, target: str, message: ActorMessage) -> bool:
         """Route a message to a specific actor."""
+        from app.core.metrics import MetricsRegistry
+        metrics = MetricsRegistry.get_instance()
+        
         actor = self._actors.get(target)
         if not actor:
-            logger.error(f"ActorSystem: Target actor '{target}' not found.")
+            logger.error(f"ActorSystem: Target actor '{target}' not found. Dropping message.")
+            metrics.get_counter("actor_dropped_messages", "Messages dropped due to missing actor or full mailbox").inc(labels={"reason": "not_found", "target": target})
             return False
             
-        await actor.send(message)
-        return True
+        try:
+            await actor.send(message)
+            return True
+        except Exception as e:
+            logger.error(f"ActorSystem: Failed to route message to '{target}': {e}")
+            metrics.get_counter("actor_dropped_messages").inc(labels={"reason": "send_error", "target": target})
+            return False

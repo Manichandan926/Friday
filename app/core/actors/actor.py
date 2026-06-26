@@ -89,16 +89,26 @@ class Actor(ABC):
 
     async def _run_loop(self) -> None:
         """Internal processing loop. Consumes mailbox messages sequentially."""
+        import time
+        from app.core.metrics import MetricsRegistry
+        metrics = MetricsRegistry.get_instance()
+        depth_gauge = metrics.get_gauge("actor_mailbox_depth", "Current messages in actor mailbox")
+        time_hist = metrics.get_histogram("actor_processing_time", "Time taken to process an actor message")
+        
         while self._running:
             try:
+                depth_gauge.set(self.mailbox.qsize(), labels={"actor": self.name})
                 msg = await self.mailbox.get()
                 
                 if not self._running or msg.message_type == "STOP":
                     self.mailbox.task_done()
                     break
 
+                start_time = time.monotonic()
                 # Process the message
                 await self.receive(msg)
+                elapsed = time.monotonic() - start_time
+                time_hist.observe(elapsed, labels={"actor": self.name, "message_type": msg.message_type})
                 
                 self.mailbox.task_done()
                 

@@ -81,6 +81,10 @@ class SupervisorActor(Actor):
 
         logger.info(f"SupervisorActor: Booting [{actor_name}]...")
         
+        from app.core.metrics import MetricsRegistry
+        metrics = MetricsRegistry.get_instance()
+        metrics.get_counter("actor_restarts", "Total number of times an actor has crashed and been restarted").inc(labels={"actor": actor_name})
+        
         # Force stop just in case
         actor._running = False
         if actor._task and not actor._task.done():
