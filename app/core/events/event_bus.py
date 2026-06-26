@@ -94,6 +94,9 @@ class EventBus:
         self._dispatch_task: Optional[asyncio.Task] = None
         self._event_available: Optional[asyncio.Event] = None
         
+        # ring buffer cache (O(1) memory lookup for recent events)
+        self._history: Deque[Event] = deque(maxlen=10000)
+        
         # main event loop reference
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
@@ -202,6 +205,7 @@ class EventBus:
         self._enforce_backpressure(event)
         with self._queue_lock:
             self._queues[event.priority.value].append(event)
+            self._history.append(event)
             self._total_published += 1
         if self._event_available:
             self._event_available.set()
@@ -211,9 +215,16 @@ class EventBus:
         self._enforce_backpressure(event)
         with self._queue_lock:
             self._queues[event.priority.value].append(event)
+            self._history.append(event)
             self._total_published += 1
         if self._loop and self._event_available:
             self._loop.call_soon_threadsafe(self._event_available.set)
+
+    def get_recent_events(self, limit: int = 100) -> List[Event]:
+        """O(1) retrieval of recent events from the ring buffer."""
+        with self._queue_lock:
+            history_list = list(self._history)
+            return history_list[-limit:]
 
     def _enforce_backpressure(self, event: Event) -> None:
         """Apply backpressure policies if queues are full."""

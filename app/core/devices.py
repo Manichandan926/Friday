@@ -10,7 +10,8 @@ Architecture:
         ├── register(device)
         ├── get(device_id)
         ├── execute(device_id, action)
-        └── status(device_id)
+        ├── status(device_id)  ← reads from TTL cache first
+        └── capabilities(device_id)
 
     All device actions flow through:
         AI → Policy Engine → Device Layer → Physical Device
@@ -19,11 +20,12 @@ Architecture:
 from __future__ import annotations
 
 import json
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import unique, Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from app.core.events.event import Event, Priority
 from app.core.events.event_bus import EventBus
@@ -74,37 +76,39 @@ class DeviceActionResult:
     data: Dict[str, Any] = field(default_factory=dict)
 
 
+class DeviceDriver(ABC):
+    """Abstract base class for physical device protocols (MQTT, HTTP, Zigbee, etc)."""
+
+    @abstractmethod
+    async def connect(self) -> bool:
+        """Establish physical connection."""
+        ...
+
+    @abstractmethod
+    async def disconnect(self) -> None:
+        """Gracefully disconnect."""
+        ...
+
+    @abstractmethod
+    async def execute(self, action: DeviceAction) -> DeviceActionResult:
+        """Execute action over the protocol."""
+        ...
+
+    @abstractmethod
+    async def get_status(self) -> Dict[str, Any]:
+        """Fetch raw state from hardware."""
+        ...
+
+
 class Device(ABC):
-    """Abstract base class for all FRIDAY devices.
+    """Abstract base class for logical FRIDAY devices.
 
-    Every device (physical or virtual) must implement this interface.
-    The DeviceManager uses it to provide a uniform control layer.
-
-    Subclass example::
-
-        class MqttLight(Device):
-            @property
-            def device_id(self) -> str: return "light_living_room_01"
-
-            @property
-            def name(self) -> str: return "Living Room Light"
-
-            @property
-            def device_type(self) -> DeviceType: return DeviceType.LIGHT
-
-            async def connect(self) -> bool:
-                # connect to MQTT broker
-                return True
-
-            async def execute(self, action: DeviceAction) -> DeviceActionResult:
-                if action.command == "turn_on":
-                    # publish MQTT message
-                    return DeviceActionResult(success=True, message="Light turned on")
-                ...
-
-            async def get_status(self) -> Dict[str, Any]:
-                return {"power": "on", "brightness": 80}
+    Separates the logical device representation from the physical protocol
+    layer (DeviceDriver).
     """
+
+    def __init__(self, driver: DeviceDriver):
+        self.driver = driver
 
     @property
     @abstractmethod
@@ -126,32 +130,26 @@ class Device(ABC):
 
     @property
     def protocol(self) -> str:
-        """Communication protocol (mqtt, http, zigbee, etc)."""
-        return "mqtt"
+        """Communication protocol (derived from driver type usually)."""
+        return self.driver.__class__.__name__.replace("Driver", "").lower()
 
     @property
     def location(self) -> Optional[str]:
         """Physical location (room, zone)."""
         return None
 
-    @abstractmethod
-    async def connect(self) -> bool:
-        """Establish connection to the physical device. Returns True on success."""
-        ...
+    @property
+    def capabilities(self) -> Set[str]:
+        """Declare what this device can do."""
+        return set()
 
-    async def disconnect(self) -> None:
-        """Gracefully disconnect."""
-        pass
-
-    @abstractmethod
     async def execute(self, action: DeviceAction) -> DeviceActionResult:
-        """Execute an action on the device."""
-        ...
+        """Execute an action on the device via its driver."""
+        return await self.driver.execute(action)
 
-    @abstractmethod
     async def get_status(self) -> Dict[str, Any]:
-        """Get current device state."""
-        ...
+        """Get current device state via its driver."""
+        return await self.driver.get_status()
 
     @property
     def status(self) -> DeviceStatus:
@@ -159,10 +157,61 @@ class Device(ABC):
         return DeviceStatus.OFFLINE
 
 
+class DeviceStateCache:
+    """TTL-based cache for device states.
+
+    Prevents querying hardware on every status request.
+    With 100+ devices, polling hardware each time is expensive.
+
+    Usage::
+
+        cache = DeviceStateCache(ttl_seconds=10)
+        cache.set("light_01", {"power": "on", "brightness": 80})
+        state = cache.get("light_01")  # → cached dict or None if expired
+    """
+
+    def __init__(self, ttl_seconds: float = 10.0):
+        self._ttl = ttl_seconds
+        self._cache: Dict[str, Dict[str, Any]] = {}       # device_id → state
+        self._timestamps: Dict[str, float] = {}            # device_id → time.monotonic()
+
+    def get(self, device_id: str) -> Optional[Dict[str, Any]]:
+        """Get cached state if TTL has not expired."""
+        ts = self._timestamps.get(device_id)
+        if ts is None:
+            return None
+        if (time.monotonic() - ts) > self._ttl:
+            # Expired
+            self._cache.pop(device_id, None)
+            self._timestamps.pop(device_id, None)
+            return None
+        return self._cache.get(device_id)
+
+    def set(self, device_id: str, state: Dict[str, Any]) -> None:
+        """Cache a device state snapshot."""
+        self._cache[device_id] = state
+        self._timestamps[device_id] = time.monotonic()
+
+    def invalidate(self, device_id: str) -> None:
+        """Invalidate cache for a specific device."""
+        self._cache.pop(device_id, None)
+        self._timestamps.pop(device_id, None)
+
+    def invalidate_all(self) -> None:
+        """Clear entire cache."""
+        self._cache.clear()
+        self._timestamps.clear()
+
+    @property
+    def size(self) -> int:
+        return len(self._cache)
+
+
 class DeviceManager:
     """Manages all registered devices through a uniform interface.
 
     All device commands go through Policy Engine validation before execution.
+    Device status queries use a TTL cache to avoid hardware polling overhead.
 
     Usage::
 
@@ -175,10 +224,12 @@ class DeviceManager:
         self,
         bus: Optional[EventBus] = None,
         policy_engine: Optional[PolicyEngine] = None,
+        cache_ttl: float = 10.0,
     ):
         self._devices: Dict[str, Device] = {}
         self._bus = bus
         self._policy = policy_engine
+        self._state_cache = DeviceStateCache(ttl_seconds=cache_ttl)
 
     def register(self, device: Device) -> bool:
         """Register a device with the manager."""
@@ -276,6 +327,9 @@ class DeviceManager:
         try:
             result = await device.execute(action)
 
+            # Invalidate cache after action (state likely changed)
+            self._state_cache.invalidate(device_id)
+
             # Emit event
             if self._bus:
                 self._bus.publish_sync(Event(
@@ -297,18 +351,33 @@ class DeviceManager:
             return DeviceActionResult(success=False, message=str(e))
 
     async def get_status(self, device_id: str) -> Optional[Dict[str, Any]]:
-        """Get current status of a device."""
+        """Get current status (cache-first, then hardware query)."""
+        # Try cache first
+        cached = self._state_cache.get(device_id)
+        if cached is not None:
+            return cached
+
+        # Cache miss — query hardware
         device = self._devices.get(device_id)
         if device is None:
             return None
         try:
-            return await device.get_status()
+            status = await device.get_status()
+            self._state_cache.set(device_id, status)
+            return status
         except Exception as e:
             logger.error(f"DeviceManager: status query failed for '{device_id}': {e}")
             return {"error": str(e)}
 
+    def get_capabilities(self, device_id: str) -> Optional[Set[str]]:
+        """Get the declared capabilities of a device."""
+        device = self._devices.get(device_id)
+        if device is None:
+            return None
+        return device.capabilities
+
     def list_devices(self) -> List[Dict[str, Any]]:
-        """List all registered devices."""
+        """List all registered devices with capabilities."""
         return [
             {
                 "device_id": d.device_id,
@@ -317,6 +386,7 @@ class DeviceManager:
                 "protocol": d.protocol,
                 "location": d.location,
                 "status": d.status.value,
+                "capabilities": sorted(d.capabilities),
             }
             for d in self._devices.values()
         ]

@@ -106,9 +106,25 @@ class Actor(ABC):
                 break
             except Exception as e:
                 logger.error(f"Actor [{self.name}]: Unhandled exception during receive: {e}")
-                # Restart logic handled by Supervisor in a real system,
-                # here we just catch to prevent the task from dying silently
+                
+                # Report to supervisor
+                try:
+                    from app.core.actors.system import ActorSystem
+                    sys = ActorSystem.get_instance()
+                    sys_coro = sys.send("supervisor", ActorMessage(
+                        sender=self.name,
+                        message_type="ACTOR_CRASHED",
+                        payload={"actor_name": self.name, "error": str(e)}
+                    ))
+                    asyncio.create_task(sys_coro)
+                except Exception as sup_e:
+                    logger.error(f"Actor [{self.name}]: Failed to notify supervisor: {sup_e}")
+
                 if self.restart_strategy == RestartStrategy.NEVER:
+                    self._running = False
+                    break
+                else:
+                    # Halt this loop; the supervisor will recreate the task
                     self._running = False
                     break
 
