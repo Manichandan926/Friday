@@ -47,10 +47,10 @@ class Email(Base):
     __tablename__ = "emails"
 
     id: Mapped[str] = mapped_column(String(255), primary_key=True)
-    subject: Mapped[str] = mapped_column(String(255))
+    subject: Mapped[str] = mapped_column(String(255), index=True)
     sender: Mapped[str] = mapped_column(String(255))
     body_summary: Mapped[str] = mapped_column(Text)
-    received_at: Mapped[datetime] = mapped_column(DateTime)
+    received_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     priority: Mapped[str] = mapped_column(String(50), default="medium")
     action_items: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_processed: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -63,8 +63,8 @@ class Task(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     title: Mapped[str] = mapped_column(String(255))
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    status: Mapped[str] = mapped_column(String(50), default="pending")
-    priority: Mapped[str] = mapped_column(String(50), default="medium")
+    status: Mapped[str] = mapped_column(String(50), default="pending", index=True)
+    priority: Mapped[str] = mapped_column(String(50), default="medium", index=True)
     due_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     source_email_id: Mapped[Optional[str]] = mapped_column(ForeignKey("emails.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
@@ -75,9 +75,9 @@ class Application(Base):
     __tablename__ = "applications"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    company: Mapped[str] = mapped_column(String(255))
+    company: Mapped[str] = mapped_column(String(255), index=True)
     role: Mapped[str] = mapped_column(String(255))
-    status: Mapped[str] = mapped_column(String(100), default="applied")
+    status: Mapped[str] = mapped_column(String(100), default="applied", index=True)
     deadline: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     source_email_id: Mapped[Optional[str]] = mapped_column(ForeignKey("emails.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
@@ -118,3 +118,73 @@ class Notification(Base):
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
 
+
+# ── Phase 2.5: Core Infrastructure Models ────────────────────────────
+
+class EventStore(Base):
+    """Persisted event log for critical events (lightweight event sourcing)."""
+    __tablename__ = "event_store"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    event_id: Mapped[str] = mapped_column(String(36), unique=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(100), index=True)
+    source: Mapped[str] = mapped_column(String(100))
+    payload: Mapped[str] = mapped_column(Text, default="{}")
+    priority: Mapped[str] = mapped_column(String(20), default="MEDIUM")
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, index=True)
+
+
+class PolicyRule(Base):
+    """Rules evaluated by the Policy Engine before actions execute."""
+    __tablename__ = "policy_rules"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    action: Mapped[str] = mapped_column(String(100), index=True)   # e.g. "unlock_door", "delete_file"
+    role: Mapped[str] = mapped_column(String(50), default="owner") # owner, guest, plugin
+    allowed: Mapped[bool] = mapped_column(Boolean, default=False)
+    requires_mfa: Mapped[bool] = mapped_column(Boolean, default=False)
+    conditions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON conditions
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+
+class DeviceRecord(Base):
+    """Registered devices for the Device Abstraction Layer."""
+    __tablename__ = "devices"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    device_id: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    device_type: Mapped[str] = mapped_column(String(100))   # light, sensor, camera, switch
+    protocol: Mapped[str] = mapped_column(String(50), default="mqtt")  # mqtt, http, zigbee
+    location: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(50), default="offline")  # online, offline, error
+    config: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON config
+    last_seen: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+
+class StateSnapshot(Base):
+    """Stores periodic snapshots of the StateStore for crash recovery."""
+    __tablename__ = "state_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    version: Mapped[int] = mapped_column(Integer, index=True)
+    state_data: Mapped[str] = mapped_column(Text)  # JSON dumped state
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+
+
+class AuditRecord(Base):
+    """Immutable audit log for security events and critical actions."""
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, index=True)
+    actor: Mapped[str] = mapped_column(String(100), index=True)      # e.g. "owner", "guest", "plugin:weather"
+    action: Mapped[str] = mapped_column(String(100))                 # e.g. "unlock_door", "delete_file"
+    resource: Mapped[str] = mapped_column(String(255))               # e.g. "device:front_door"
+    decision: Mapped[str] = mapped_column(String(50))                # e.g. "ALLOW", "DENY"
+    source_ip: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    context_data: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # JSON payload
