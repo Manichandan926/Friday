@@ -11,10 +11,18 @@ ENV/
 .pytest_cache/
 .mypy_cache/
 
+# Python packaging
+*.egg-info/
+dist/
+build/
+
 # Databases
 database/*.db
+database/*.db-shm
+database/*.db-wal
 database/*.sqlite
 database/backups/
+database/secrets_store.json
 
 # Logs
 logs/
@@ -28,14 +36,30 @@ logs/
 .DS_Store
 Thumbs.db
 
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
 # Google API credentials & tokens
 credentials.json
 token.json
 client_secret_*.json
 fridaydesktop.json
 
-# Native C binaries (compiled locally)
+# Native C binaries & shared objects (compiled locally)
 native/friday_monitor
+native/*.so
 *.o
 /tmp/friday_monitor.sock
+
+# Coverage
+htmlcov/
+.coverage
+coverage.xml
+
+# Stale / scratch files
+mark1.txt
+home/
 

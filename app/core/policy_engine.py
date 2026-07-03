@@ -29,6 +29,7 @@ from enum import Enum, unique
 from typing import Any, Callable, Dict, List, Optional
 
 from app.core.logger import logger
+from app.core.audit_system import AuditSystem, AuditEntry
 
 
 @unique
@@ -69,11 +70,12 @@ class PolicyEngine:
     This follows the principle of least privilege.
     """
 
-    def __init__(self):
+    def __init__(self, audit_system: Optional[AuditSystem] = None):
         self._memory_rules: Dict[str, List[Dict[str, Any]]] = {}
         self._db_rules_loaded = False
         self._db_rules: Dict[str, List[Dict[str, Any]]] = {}
         self._condition_evaluators: Dict[str, Callable] = {}
+        self._audit_system = audit_system
 
     def load_rules_from_db(self) -> int:
         """Load policy rules from the PolicyRule database table.
@@ -170,51 +172,63 @@ class PolicyEngine:
 
         # No rule found → DENY (least privilege)
         if rule is None:
-            return PolicyDecision(
+            return self._finalize_decision(PolicyDecision(
                 decision=Decision.DENY,
                 action=action,
                 role=role,
                 reason=f"No policy rule found for action '{action}' with role '{role}'",
-            )
+            ), request)
 
         # Rule found but not allowed
         if not rule["allowed"]:
-            return PolicyDecision(
+            return self._finalize_decision(PolicyDecision(
                 decision=Decision.DENY,
                 action=action,
                 role=role,
                 reason=f"Action '{action}' is explicitly denied for role '{role}'",
-            )
+            ), request)
 
         # Check conditions
         conditions = rule.get("conditions", {})
         if conditions:
             conditions_met = self._evaluate_conditions(conditions, request.context)
             if not conditions_met:
-                return PolicyDecision(
+                return self._finalize_decision(PolicyDecision(
                     decision=Decision.DENY,
                     action=action,
                     role=role,
                     reason=f"Conditions not met for action '{action}'",
                     conditions_met=False,
-                )
+                ), request)
 
         # Check MFA requirement
         if rule.get("requires_mfa", False):
-            return PolicyDecision(
+            return self._finalize_decision(PolicyDecision(
                 decision=Decision.REQUIRE_MFA,
                 action=action,
                 role=role,
                 reason=f"Action '{action}' requires MFA confirmation",
-            )
+            ), request)
 
         # All checks passed
-        return PolicyDecision(
+        return self._finalize_decision(PolicyDecision(
             decision=Decision.ALLOW,
             action=action,
             role=role,
             reason="Policy check passed",
-        )
+        ), request)
+
+    def _finalize_decision(self, decision: PolicyDecision, request: PolicyRequest) -> PolicyDecision:
+        """Log decision and return it."""
+        if self._audit_system:
+            self._audit_system.log(AuditEntry(
+                actor=request.source or request.role,
+                action=decision.action,
+                resource=request.context.get("resource", "system"),
+                decision=decision.decision.value.upper(),
+                context_data=request.context
+            ))
+        return decision
 
     def is_allowed(self, action: str, role: str = "owner", context: Optional[Dict] = None) -> bool:
         """Convenience method: returns True only if the action is ALLOW."""

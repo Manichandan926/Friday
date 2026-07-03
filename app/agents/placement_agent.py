@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any
 from app.llm.provider import get_llm_provider
 from app.core.logger import logger
 from app.memory.memory_manager import MemoryManager
+from app.agents.skills.ponytail import inject_ponytail
 
 SYSTEM_PROMPT = """You are the Placement Agent for the FRIDAY AI assistant.
 Your task is to extract details of a job/internship application or interview invitation from the email details.
@@ -42,7 +43,7 @@ class PlacementAgent:
         email_payload = f"From: {sender}\nSubject: {subject}\nBody:\n{truncated_body}"
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": inject_ponytail(SYSTEM_PROMPT)},
             {"role": "user", "content": email_payload}
         ]
 

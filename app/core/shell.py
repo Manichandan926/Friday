@@ -24,7 +24,7 @@ SAFE_COMMANDS = {
     # files
     "cat", "head", "tail", "less", "wc", "file", "stat", "ls", "find", "which",
     "whereis", "type", "echo", "env", "printenv", "readlink", "realpath",
-    "md5sum", "sha256sum", "strings", "touch", "mkdir",
+    "md5sum", "sha256sum", "strings", "touch", "mkdir", "pwd",
     # development
     "python3", "python", "java", "javac", "gcc", "g++", "node", "npm", "cargo",
     "git", "pip", "pip3", "rustc", "go",

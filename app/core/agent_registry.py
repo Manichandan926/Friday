@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Set, Type
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type
 
 from app.core.events.event_bus import EventBus
 from app.core.logger import logger
@@ -163,18 +163,24 @@ class AgentRegistry:
         logger.debug(f"AgentRegistry: unregistered '{agent_name}'")
         return True
 
-    def find(self, query: str) -> Optional[BaseAgent]:
+    def find(self, query: str) -> Tuple[Optional[BaseAgent], float]:
         """Find the best-matching agent for a query string.
+
+        Returns a tuple of (agent_instance, confidence_score).
+        Confidence score is a float between 0.0 and 1.0.
 
         Matching strategy:
             1. Tokenize query into lowercase words
             2. Check each word against the intent index
             3. Score each matching agent by number of matched intents
             4. Break ties by agent priority
-            5. Return the winning agent instance (lazily created)
+            5. Return the winning agent instance and normalized score
         """
         query_lower = query.lower()
         query_words = set(query_lower.split())
+        
+        if not query_words:
+            return None, 0.0
 
         # Score agents by intent matches
         scores: Dict[str, int] = {}
@@ -191,7 +197,7 @@ class AgentRegistry:
                         scores[agent_name] = scores.get(agent_name, 0) + 1
 
         if not scores:
-            return None
+            return None, 0.0
 
         # Sort by score (desc), then by priority (desc)
         best_name = max(
@@ -199,12 +205,21 @@ class AgentRegistry:
             key=lambda n: (scores[n], self._agents[n].priority),
         )
 
-        return self._get_instance(best_name)
+        # Calculate a simple confidence score (0.0 to 1.0)
+        # based on ratio of matched query words, boosted by priority
+        raw_score = scores[best_name]
+        priority_boost = min(self._agents[best_name].priority / 200.0, 0.2) # max 0.2 boost
+        confidence = min((raw_score / max(1, len(query_words))) + priority_boost, 1.0)
 
-    def find_all(self, query: str) -> List[BaseAgent]:
+        return self._get_instance(best_name), round(confidence, 2)
+
+    def find_all(self, query: str) -> List[Tuple[BaseAgent, float]]:
         """Find all agents matching a query, sorted by relevance."""
         query_lower = query.lower()
         query_words = set(query_lower.split())
+        
+        if not query_words:
+            return []
 
         scores: Dict[str, int] = {}
         for word in query_words:
@@ -221,7 +236,16 @@ class AgentRegistry:
             reverse=True,
         )
 
-        return [self._get_instance(n) for n in sorted_names if self._get_instance(n)]
+        results = []
+        for name in sorted_names:
+            instance = self._get_instance(name)
+            if instance:
+                raw_score = scores[name]
+                priority_boost = min(self._agents[name].priority / 200.0, 0.2)
+                confidence = min((raw_score / max(1, len(query_words))) + priority_boost, 1.0)
+                results.append((instance, round(confidence, 2)))
+
+        return results
 
     def get(self, agent_name: str) -> Optional[BaseAgent]:
         """Get an agent instance by name."""

@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 from app.llm.provider import get_llm_provider
 from app.core.logger import logger
 from app.memory.memory_manager import MemoryManager
+from app.agents.skills.ponytail import inject_ponytail
 
 SYSTEM_PROMPT = """You are the Task Agent for the FRIDAY AI assistant.
 Your job is to translate a planning request into a structured list of tasks.
@@ -37,7 +38,7 @@ class TaskAgent:
             return []
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": inject_ponytail(SYSTEM_PROMPT)},
             {"role": "user", "content": f"Create a structured plan for: {user_request}"}
         ]
 

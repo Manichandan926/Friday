@@ -7,6 +7,7 @@ from typing import Optional, Dict
 from app.llm.provider import get_llm_provider
 from app.core.shell import execute_command, is_command_safe
 from app.core.logger import logger
+from app.agents.skills.ponytail import inject_ponytail
 
 SYSTEM_PROMPT = """You are a Linux command generator. The user will ask a question that requires running a shell command to answer.
 
@@ -44,7 +45,7 @@ class ShellAgent:
             return "Shell agent unavailable: no LLM provider configured."
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": inject_ponytail(SYSTEM_PROMPT)},
             {"role": "user", "content": question}
         ]
 

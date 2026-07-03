@@ -4,6 +4,7 @@ from typing import List, Dict, Any
 from app.llm.provider import get_llm_provider
 from app.core.logger import logger
 from app.memory.memory_manager import MemoryManager
+from app.agents.skills.ponytail import inject_ponytail
 
 SYSTEM_PROMPT = """You are a memory extraction module.
 Analyze the recent chat exchange and extract ONLY facts the USER explicitly stated about themselves.
@@ -60,7 +61,7 @@ class MemoryAgent:
         prompt = f"Existing Memories:\n{existing_text}\n\nRecent Exchange:\n{exchange_text}"
 
         messages_payload = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": inject_ponytail(SYSTEM_PROMPT)},
             {"role": "user", "content": prompt}
         ]
 

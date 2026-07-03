@@ -1,34 +1,36 @@
-"""
-actor_crashes.py — Chaos testing for Actor Supervisor.
-
-Randomly crashes actors while asserting that no messages are lost 
-and the system recovers automatically via Supervisor Let-It-Crash semantics.
-"""
-
+import pytest
 import asyncio
 import random
-import time
-
 from app.core.actors.actor import Actor, ActorMessage
 from app.core.actors.system import ActorSystem
 from app.core.actors.supervisor import SupervisorActor
-
+from app.core.metrics import MetricsRegistry
 
 class FragileActor(Actor):
     def __init__(self):
         super().__init__(name="fragile")
         self.processed = 0
+        self.crashed = False
+        
+    async def receive(self, msg: ActorMessage) -> None:
+        if msg.message_type == "CRASH":
+            self.crashed = True
+            raise ValueError("Simulated crash")
+        elif msg.message_type == "WORK":
+            self.processed += 1
+
+class StressActor(Actor):
+    def __init__(self):
+        super().__init__(name="stress")
+        self.processed = 0
         
     async def receive(self, msg: ActorMessage) -> None:
         if msg.message_type == "WORK":
-            # 10% chance to simulate a random memory fault or crash
-            if random.random() < 0.1:
-                raise RuntimeError("Random chaos fault!")
             self.processed += 1
-            await asyncio.sleep(0.001)
 
-
-async def main():
+@pytest.mark.asyncio
+async def test_actor_recovery_on_crash(cleanup_singletons):
+    # Setup System & Supervisor
     sys = ActorSystem.get_instance()
     sup = SupervisorActor()
     sys.spawn(sup)
@@ -39,24 +41,52 @@ async def main():
     
     await sys.start_all()
     
-    # We will bombard it with work and see if it eventually processes enough
-    print("Chaos Test: Bombarding FragileActor with work (expect stack traces)...")
+    # 1. Send normal work
+    await sys.send("fragile", ActorMessage("test", "WORK", None))
+    # Give it a millisecond to process
+    await asyncio.sleep(0.05)
+    assert actor.processed == 1
     
-    for i in range(100):
-        # Fire and forget. System.send will route it.
-        await sys.send("fragile", ActorMessage("chaos", "WORK", None))
-        await asyncio.sleep(0.01) # Small delay to allow restarts to happen
-
-    await asyncio.sleep(2)
+    # 2. Trigger a crash
+    await sys.send("fragile", ActorMessage("test", "CRASH", None))
+    # Wait for crash detection and 1 second delayed restart
+    await asyncio.sleep(1.2)
     
-    from app.core.metrics import MetricsRegistry
-    metrics = MetricsRegistry.get_instance().export_json()
-    restarts = list(metrics.get("actor_restarts", {}).get("counts", {}).values())
-    total_restarts = restarts[0] if restarts else 0
+    # 3. Check restarted actor is active and can process work again
+    restarted_actor = sys.get_actor("fragile")
+    assert restarted_actor is not None
+    assert restarted_actor is actor # It is the same object, but its task is restarted
     
-    print(f"Chaos Test Complete. Actor crashed and restarted {total_restarts} times.")
+    await sys.send("fragile", ActorMessage("test", "WORK", None))
+    await asyncio.sleep(0.05)
+    
+    # Processed count should be 2 now (1 before crash, 1 after restart)
+    assert restarted_actor.processed == 2
     
     await sys.stop_all()
 
-if __name__ == "__main__":
-    asyncio.run(main())
+@pytest.mark.asyncio
+async def test_stress_message_bombardment(cleanup_singletons):
+    sys = ActorSystem.get_instance()
+    actor = StressActor()
+    sys.spawn(actor)
+    
+    await sys.start_all()
+    
+    # Concurrently send 500 messages
+    tasks = []
+    for i in range(500):
+        tasks.append(sys.send("stress", ActorMessage("test", "WORK", i)))
+        
+    # Gather sender futures
+    results = await asyncio.gather(*tasks)
+    assert all(results)
+    
+    # Wait for queue to process
+    for _ in range(50):
+        if actor.processed == 500:
+            break
+        await asyncio.sleep(0.05)
+        
+    assert actor.processed == 500
+    await sys.stop_all()

@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional
 
 from app.llm.provider import get_llm_provider
 from app.core.logger import logger
+from app.agents.skills.ponytail import inject_ponytail
 
 SYSTEM_PROMPT = """You are the Inbox Agent for the FRIDAY AI assistant.
 Your task is to analyze the provided email details and return structured metadata.
@@ -43,7 +44,7 @@ class InboxAgent:
         email_payload = f"From: {sender}\nSubject: {subject}\nBody:\n{truncated_body}"
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": inject_ponytail(SYSTEM_PROMPT)},
             {"role": "user", "content": email_payload}
         ]
 

@@ -2,6 +2,7 @@ import datetime
 from app.llm.provider import get_llm_provider
 from app.core.logger import logger
 from app.memory.memory_manager import MemoryManager
+from app.agents.skills.ponytail import inject_ponytail
 
 SYSTEM_PROMPT = """You are the Planner Agent for the FRIDAY AI assistant.
 Your task is to compile a highly personalized, motivating, and clear Daily Briefing for the user.
@@ -65,7 +66,7 @@ PENDING TASKS:
 """
 
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": inject_ponytail(SYSTEM_PROMPT)},
             {"role": "user", "content": prompt}
         ]
 
