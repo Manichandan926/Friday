@@ -29,6 +29,10 @@ class Settings:
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+
+    # Claude model (used when provider is claude/anthropic)
+    ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8")
     
     def __init__(self):
         # Auto-create necessary directories
