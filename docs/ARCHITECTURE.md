@@ -98,8 +98,9 @@ and falls back to pure Python.
   without a key. `raw_content` replays provider-native blocks (Claude
   thinking, Gemini functionCall parts) verbatim across tool-loop turns,
   which some providers require.
-- `costs.py` — every response's token `Usage` is logged per call and summed
-  per session (`/cost`). Totals are in-memory; they reset with the process.
+- `costs.py` — every response's token `Usage` is logged per call, summed per
+  session, and persisted to the `usage_records` table so `/cost` shows both
+  the current session and a running all-time total that survives restarts.
 
 Why the seam: it makes the brain swappable — including, eventually, a local
 model — without the orchestrator knowing. See ADR-009.

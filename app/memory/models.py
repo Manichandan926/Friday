@@ -111,6 +111,23 @@ class Project(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
+class UsageRecord(Base):
+    """One LLM API call's token usage and cost, for the running /cost total.
+
+    Persisted so /cost survives restarts instead of resetting each session.
+    """
+    __tablename__ = "usage_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    provider: Mapped[str] = mapped_column(String(50), index=True)
+    model: Mapped[str] = mapped_column(String(120), index=True)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cost: Mapped[float] = mapped_column(Float, default=0.0)          # USD estimate
+    cost_known: Mapped[bool] = mapped_column(Boolean, default=True)  # False if model unpriced
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, index=True)
+
+
 class Notification(Base):
     """Proactive alert history."""
     __tablename__ = "notifications"

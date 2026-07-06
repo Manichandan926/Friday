@@ -1,8 +1,8 @@
 from datetime import datetime
 from typing import List, Optional
-from sqlalchemy import select
+from sqlalchemy import func, select
 from app.memory.database import get_db_session
-from app.memory.models import Conversation, Message, MemoryItem, Email, Task, Application, KnowledgeItem, Project, Notification
+from app.memory.models import Conversation, Message, MemoryItem, Email, Task, Application, KnowledgeItem, Project, Notification, UsageRecord
 
 class MemoryManager:
     # --- Conversations ---
@@ -298,6 +298,52 @@ class MemoryManager:
                 stmt = stmt.where(Notification.is_read == False)
             stmt = stmt.order_by(Notification.created_at.desc()).limit(limit)
             return list(session.scalars(stmt).all())
+
+    # --- LLM usage / cost ---
+
+    @staticmethod
+    def add_usage_record(provider: str, model: str, input_tokens: int,
+                         output_tokens: int, cost: float, cost_known: bool) -> UsageRecord:
+        with get_db_session() as session:
+            rec = UsageRecord(
+                provider=provider, model=model,
+                input_tokens=input_tokens, output_tokens=output_tokens,
+                cost=cost, cost_known=cost_known,
+            )
+            session.add(rec)
+            session.flush()
+            return rec
+
+    @staticmethod
+    def get_usage_totals() -> List[dict]:
+        """All-time usage aggregated per provider/model (newest schema)."""
+        with get_db_session() as session:
+            stmt = (
+                select(
+                    UsageRecord.provider,
+                    UsageRecord.model,
+                    func.count(UsageRecord.id),
+                    func.sum(UsageRecord.input_tokens),
+                    func.sum(UsageRecord.output_tokens),
+                    func.sum(UsageRecord.cost),
+                    func.min(UsageRecord.cost_known),  # 0 if any call was unpriced
+                )
+                .group_by(UsageRecord.provider, UsageRecord.model)
+            )
+            totals = []
+            for provider, model, calls, tin, tout, tcost, known in session.execute(stmt).all():
+                totals.append({
+                    "provider": provider,
+                    "model": model,
+                    "calls": calls,
+                    "input_tokens": int(tin or 0),
+                    "output_tokens": int(tout or 0),
+                    "cost": float(tcost or 0.0),
+                    "cost_known": bool(known),
+                })
+            return totals
+
+    # --- Notifications ---
 
     @staticmethod
     def mark_notifications_read() -> int:

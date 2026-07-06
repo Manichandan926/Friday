@@ -55,7 +55,7 @@ _session = _Session()
 
 
 def record(provider: str, model: str, usage: Usage) -> None:
-    """Log one call's usage and fold it into the session totals."""
+    """Log one call's usage, fold it into the session totals, and persist it."""
     cost = estimate_cost(model, usage)
     cost_str = f" cost=${cost:.6f}" if cost is not None else " cost=unknown"
     logger.info(
@@ -70,6 +70,18 @@ def record(provider: str, model: str, usage: Usage) -> None:
         total.cost_known = False
     else:
         total.cost += cost
+
+    # Persist for the running all-time total (survives restarts). Best-effort:
+    # cost accounting must never take down an LLM call, so a DB hiccup here is
+    # logged and swallowed, not raised.
+    try:
+        from app.memory.memory_manager import MemoryManager
+        MemoryManager.add_usage_record(
+            provider, model, usage.input_tokens, usage.output_tokens,
+            cost or 0.0, cost is not None,
+        )
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug(f"Could not persist usage record: {e}")
 
 
 def session_report() -> str:
@@ -93,6 +105,43 @@ def session_report() -> str:
     return "\n".join(lines)
 
 
+def all_time_report() -> str:
+    """Persisted running total across all sessions, for /cost. Empty string
+    when there's nothing recorded or the store is unreachable."""
+    try:
+        from app.memory.memory_manager import MemoryManager
+        totals = MemoryManager.get_usage_totals()
+    except Exception:
+        return ""
+    if not totals:
+        return ""
+
+    lines = ["### All-time LLM usage (across restarts)\n"]
+    grand_cost = 0.0
+    all_known = True
+    for t in sorted(totals, key=lambda t: f"{t['provider']}/{t['model']}"):
+        cost_str = f"${t['cost']:.4f}" + ("" if t["cost_known"] else " (partial — some calls unpriced)")
+        lines.append(
+            f"- **{t['provider']}/{t['model']}** — {t['calls']} calls, "
+            f"{t['input_tokens']:,} in / {t['output_tokens']:,} out tokens, {cost_str}"
+        )
+        grand_cost += t["cost"]
+        all_known = all_known and t["cost_known"]
+    suffix = "" if all_known else " (known models only)"
+    lines.append(f"\n**All-time total: ${grand_cost:.4f}**{suffix}")
+    return "\n".join(lines)
+
+
+def usage_report() -> str:
+    """What /cost shows: this session, then the persisted all-time total."""
+    parts = ["### This session\n" + session_report()]
+    all_time = all_time_report()
+    if all_time:
+        parts.append(all_time)
+    return "\n\n".join(parts)
+
+
 def reset() -> None:
-    """Clear session totals (tests)."""
+    """Clear in-memory session totals (tests / simulating a fresh process).
+    Does NOT touch the persisted records — that's the point of persistence."""
     _session.by_model.clear()

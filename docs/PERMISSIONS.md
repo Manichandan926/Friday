@@ -116,13 +116,17 @@ real terminal session, not only the test suite):
   real session, "hmm, not sure" re-asked and held the pending write, then
   "yeah go for it" approved and wrote it.
 
-**Still open:**
+**Also closed 2026-07-06:**
 
-- **`watch_directory` has no path scope.** It can watch any readable
-  directory (`/etc`, `~/.ssh`), unlike `write_file` which is confined to
-  `ALLOWED_WRITE_ROOTS`. Read-only observation, so lower severity, but it's
-  an information-gathering capability at AUTO with no boundary — inconsistent
-  with the rest of the design. Consider a `WATCHABLE_ROOTS` allow-list.
-- **The pure-Python daemon fallback is not regression-tested.** The
-  `tools.py` readers' `/proc` fallback (used when no native daemon is up)
-  was verified live once and has no automated coverage.
+- ~~**`watch_directory` has no path scope.**~~ Fixed. It's now fenced to
+  `ALLOWED_WATCH_ROOTS` (home by default) via the shared `_safe_path()`,
+  mirroring `write_file` — watching `/etc` or another user's home is refused.
+  Live check: "watch the /etc directory" was refused with an explanation.
+- ~~**The pure-Python daemon fallback is not regression-tested.**~~ Fixed.
+  `tests/test_tools_fallback.py` forces the native readers off and asserts
+  each `tools.py` reader still returns real `/proc`/`/sys` data — a broken
+  fallback now fails the suite instead of failing silently in production.
+
+No permission-tier gaps are currently open. (The cost/usage total is now
+persisted to SQLite so `/cost` shows a real running figure across restarts —
+unrelated to permissions, but part of the same cleanup pass.)

@@ -454,7 +454,7 @@ class FridayAssistant:
 
         if cleaned_msg in ("/cost", "/usage"):
             from app.llm import costs
-            return costs.session_report()
+            return costs.usage_report()
 
         if cleaned_msg.startswith("/provider"):
             parts = user_message.split(maxsplit=1)

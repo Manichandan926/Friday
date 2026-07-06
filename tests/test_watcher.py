@@ -99,7 +99,9 @@ class TestToolkitIntegration:
                      "list_watched_directories", "get_file_events"):
             assert tiers.classify(name) == Tier.AUTO, name
 
-    def test_toolkit_watch_roundtrip(self, watcher, tmp_path):
+    def test_toolkit_watch_roundtrip(self, watcher, tmp_path, monkeypatch):
+        # tmp_path is under /tmp, outside the home fence — allow it for the test.
+        monkeypatch.setattr(toolkit, "ALLOWED_WATCH_ROOTS", [tmp_path])
         target = tmp_path / "tk"
         target.mkdir()
         assert "OK watching" in toolkit.execute("watch_directory", {"path": str(target)})

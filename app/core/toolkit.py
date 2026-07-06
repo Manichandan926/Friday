@@ -24,6 +24,18 @@ from app.memory.memory_manager import MemoryManager
 
 # Filesystem writes are confined to these roots (tests point this at tmp).
 ALLOWED_WRITE_ROOTS = [Path.home()]
+# File watching is fenced the same way — passive, but still shouldn't roam
+# into /etc, /sys, other users' homes, etc. Mirrors the write fence.
+ALLOWED_WATCH_ROOTS = [Path.home()]
+
+
+def _safe_path(raw: str, roots: List[Path]) -> Path:
+    """Resolve a path and require it to fall under one of `roots`."""
+    path = Path(raw).expanduser().resolve()
+    if not any(path.is_relative_to(root.resolve()) for root in roots):
+        allowed = ", ".join(str(r) for r in roots)
+        raise ValueError(f"path must be under {allowed}; got {path}")
+    return path
 
 
 @dataclass
@@ -230,11 +242,7 @@ def _add_application(company: str, role: str, status: str = "applied", deadline:
 # ── filesystem writes (Tier 2: require approval) ─────────
 
 def _safe_write_path(raw: str) -> Path:
-    path = Path(raw).expanduser().resolve()
-    if not any(path.is_relative_to(root.resolve()) for root in ALLOWED_WRITE_ROOTS):
-        allowed = ", ".join(str(r) for r in ALLOWED_WRITE_ROOTS)
-        raise ValueError(f"path must be under {allowed}; got {path}")
-    return path
+    return _safe_path(raw, ALLOWED_WRITE_ROOTS)
 
 
 @_register(
@@ -286,14 +294,16 @@ _WATCHER_DOWN = (
 @_register(
     "watch_directory",
     "Start watching a directory for file changes (created/modified/deleted/"
-    "moved). Passive observation only — nothing is touched. Events are "
-    "collected in the background and read with get_file_events.",
+    "moved). Passive observation only — nothing is touched. Must be inside "
+    "the user's home directory. Events are collected in the background and "
+    "read with get_file_events.",
     params={"path": {"type": "string", "description": "Directory to watch, e.g. ~/Downloads."}},
     required=["path"],
 )
 def _watch_directory(path: str) -> str:
     from app.core import native_bridge
-    reply = native_bridge.watch_directory(str(Path(path).expanduser()))
+    target = _safe_path(path, ALLOWED_WATCH_ROOTS)  # raises → "argument error" via execute()
+    reply = native_bridge.watch_directory(str(target))
     return reply.strip() if reply else _WATCHER_DOWN
 
 

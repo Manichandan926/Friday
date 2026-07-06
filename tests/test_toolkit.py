@@ -47,6 +47,13 @@ class TestExecute:
         out = toolkit.execute("run_shell", {"command": "echo friday"})
         assert "friday" in out
 
+    def test_watch_directory_outside_allowed_roots_refused(self, tmp_path, monkeypatch):
+        # Fence mirrors write_file: watching must stay inside the allowed roots.
+        # Refused before any daemon call, so this needs no watcher running.
+        monkeypatch.setattr(toolkit, "ALLOWED_WATCH_ROOTS", [tmp_path])
+        out = toolkit.execute("watch_directory", {"path": "/etc"})
+        assert "argument error" in out
+
     def test_bad_date_reports_error_not_exception(self):
         out = toolkit.execute("add_task", {"title": "X", "due_date": "next tuesday"})
         assert "argument error" in out

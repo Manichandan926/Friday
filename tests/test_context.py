@@ -133,3 +133,25 @@ class TestCosts:
     def test_unpriced_model_flagged_in_report(self):
         costs.record("Groq", "mystery-model", Usage(10, 10))
         assert "unpriced" in costs.session_report()
+
+    def test_usage_persists_across_a_simulated_restart(self):
+        costs.reset()
+        costs.record("Groq", "llama-3.3-70b-versatile", Usage(100, 50))
+        costs.record("Groq", "llama-3.3-70b-versatile", Usage(200, 100))
+
+        # Simulate a restart: the in-memory session is gone, the DB is not.
+        costs.reset()
+        assert "No LLM calls" in costs.session_report()  # session view is empty
+
+        all_time = costs.all_time_report()
+        assert "llama-3.3-70b-versatile" in all_time
+        assert "2 calls" in all_time
+        assert "300" in all_time and "150" in all_time  # summed across the two calls
+        assert "All-time total" in all_time
+
+    def test_usage_report_shows_session_and_all_time(self):
+        costs.reset()
+        costs.record("Groq", "llama-3.3-70b-versatile", Usage(10, 5))
+        report = costs.usage_report()
+        assert "This session" in report
+        assert "across restarts" in report  # the persisted section header
