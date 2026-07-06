@@ -136,25 +136,56 @@ executed — explain what you'd recommend and how they can do it themselves.
 tight; skip headers and bullet walls unless they genuinely help.
 """
 
-HELP_TEXT = (
-    "### FRIDAY Commands\n\n"
-    "Just talk to me normally — I can check the system, your tasks, emails, "
-    "deadlines, and more on my own. Slash commands are free shortcuts that "
-    "skip the LLM:\n\n"
-    "| Command | Description |\n"
-    "| --- | --- |\n"
-    "| `/brief` | Daily briefing with tasks, emails, and focus |\n"
-    "| `/plan request` | Generate a task plan |\n"
-    "| `/run command` | Run a safe shell command directly |\n"
-    "| `/learn cat \\| title \\| content` | Add to knowledge vault |\n"
-    "| `/search query` | Search knowledge vault |\n"
-    "| `/addproject name \\| desc \\| progress` | Track a project |\n"
-    "| `/scan` | Scan the web for internship listings |\n"
-    "| `/notifications` | View proactive alerts |\n"
-    "| `/provider name` | Switch LLM provider (groq, openai, gemini, claude) |\n"
-    "| `/cost` | Session token usage and cost per model |\n"
-    "| `/help` | Show this help |\n"
-)
+HELP_TEXT = r"""## 🤖 FRIDAY — what I can do
+
+**Just talk to me in plain English.** You don't need to memorize anything
+below — it's a map, not a syntax you have to learn.
+
+### 💬 Ask me anything
+Questions, coding, advice, explanations — I just answer. I also know your
+tasks, emails, deadlines, applications, notes, and this laptop's live status,
+so things like *"what's due this week?"* or *"how much RAM am I using?"* work.
+
+### 🖥️ Control your laptop — just ask (these happen instantly)
+- **Media & sound** — *"pause the music"*, *"next song"*, *"set volume to 40"*, *"mute"*
+- **Screen** — *"dim to 30%"*, *"how bright is it?"*, *"take a screenshot"*
+- **Reminders** — *"remind me in 20 minutes to stretch"*
+- **Notifications** — *"notify me the download is done"*
+- **Clipboard** — *"what's in my clipboard?"*, *"copy my email to the clipboard"*
+- **Quick math** — *"what's 1200 * 0.18 + 50?"*
+
+### ✅ Actions I confirm first (I'll ask before doing them)
+- **Open an app** — *"open Firefox"*, *"open the files app"*
+- **Open a file or link** — *"open my Downloads"*, *"open github.com"*
+- **Play media** — *"play ~/Music/song.mp3"*
+- **Write a file, make a folder, or change something with a shell command**
+
+You'll see a **⏸ Approval needed** box — reply **yes** (or *"yeah"*, *"ok"*,
+*"go ahead"*) to run it, anything else to skip.
+
+### ⛔ Things I never do
+Delete files, run `sudo`, or anything hard to undo. I'll tell you how to do it
+yourself instead. This limit is enforced in code, not just my judgment.
+
+---
+
+### ⌨️ Slash commands — instant shortcuts that skip the AI (free)
+
+| Command | What it does |
+| --- | --- |
+| `/help` | Show this help |
+| `/brief` | Your daily briefing — tasks, emails, focus |
+| `/plan goal` | Turn a goal into a task plan — e.g. `/plan finish my resume` |
+| `/run command` | Run a safe, read-only shell command — e.g. `/run df -h` |
+| `/search query` | Search your saved notes — e.g. `/search s3 policy` |
+| `/learn cat \| title \| content` | Save a note — e.g. `/learn aws \| S3 \| policies are JSON` |
+| `/addproject name \| desc \| progress` | Track a project |
+| `/scan` | Scan the web for internship listings |
+| `/notifications` | Show proactive alerts |
+| `/provider name` | Switch AI brain — groq, openai, gemini, claude |
+| `/cost` | Token usage & cost (this session + all-time) |
+| `exit` | Quit FRIDAY |
+"""
 
 
 class FridayAssistant:

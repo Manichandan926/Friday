@@ -312,7 +312,7 @@ async def test_slash_command_does_not_consume_pending_approval(write_root):
 
     await assistant.chat(conv.id, "make the file")
     help_reply = await assistant.chat(conv.id, "/help")
-    assert "FRIDAY Commands" in help_reply
+    assert "Slash commands" in help_reply
     assert conv.id in assistant._pending  # proposal still live
 
     reply = await assistant.chat(conv.id, "/approve")
@@ -414,7 +414,7 @@ async def test_slash_help_skips_llm():
 
     reply = await assistant.chat(conv.id, "/help")
 
-    assert "FRIDAY Commands" in reply
+    assert "Slash commands" in reply
     assert "/provider" in reply
 
 
