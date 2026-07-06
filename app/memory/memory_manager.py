@@ -16,6 +16,11 @@ class MemoryManager:
             return conv
 
     @staticmethod
+    def get_conversation(conversation_id: int) -> Optional[Conversation]:
+        with get_db_session() as session:
+            return session.scalar(select(Conversation).where(Conversation.id == conversation_id))
+
+    @staticmethod
     def get_conversations() -> List[Conversation]:
         with get_db_session() as session:
             stmt = select(Conversation).order_by(Conversation.created_at.desc())
@@ -34,6 +39,27 @@ class MemoryManager:
         with get_db_session() as session:
             stmt = select(Message).where(Message.conversation_id == conversation_id).order_by(Message.created_at.asc())
             return list(session.scalars(stmt).all())
+
+    @staticmethod
+    def get_messages_after(conversation_id: int, after_id: int) -> List[Message]:
+        """Messages not yet covered by the rolling summary (id > after_id)."""
+        with get_db_session() as session:
+            stmt = (
+                select(Message)
+                .where(Message.conversation_id == conversation_id, Message.id > after_id)
+                .order_by(Message.id.asc())
+            )
+            return list(session.scalars(stmt).all())
+
+    @staticmethod
+    def set_summary(conversation_id: int, summary: str, until_id: int) -> None:
+        """Store the rolling summary and the last message id it covers."""
+        with get_db_session() as session:
+            conv = session.scalar(select(Conversation).where(Conversation.id == conversation_id))
+            if conv:
+                conv.summary = summary
+                conv.summary_until_id = until_id
+                session.flush()
 
     # --- Memory (Facts/Preferences) ---
 

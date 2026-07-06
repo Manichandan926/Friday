@@ -198,6 +198,64 @@ async def test_anthropic_refusal_returns_safe_text():
     assert not reply.tool_calls
 
 
+@pytest.mark.asyncio
+async def test_openai_compatible_chat_parses_usage():
+    from app.llm import costs
+    costs.reset()
+
+    async def fake_create(**params):
+        resp = _openai_style_response(content="hi", tool_calls=None)
+        resp.usage = SimpleNamespace(prompt_tokens=120, completion_tokens=30)
+        return resp
+
+    provider = OpenAICompatibleProvider.__new__(OpenAICompatibleProvider)
+    provider.client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))
+    )
+    provider.model = "llama-3.3-70b-versatile"
+
+    reply = await provider.chat([{"role": "user", "content": "hey"}])
+    assert reply.usage.input_tokens == 120
+    assert reply.usage.output_tokens == 30
+    assert "llama-3.3-70b-versatile" in costs.session_report()
+
+
+@pytest.mark.asyncio
+async def test_anthropic_chat_parses_usage():
+    from app.llm import costs
+    costs.reset()
+
+    async def fake_create(**params):
+        return SimpleNamespace(
+            stop_reason="end_turn",
+            content=[_Block(type="text", text="hello")],
+            usage=SimpleNamespace(input_tokens=200, output_tokens=50),
+        )
+
+    provider = AnthropicProvider.__new__(AnthropicProvider)
+    provider.client = SimpleNamespace(messages=SimpleNamespace(create=fake_create))
+    provider.model = "claude-opus-4-8"
+
+    reply = await provider.chat([{"role": "user", "content": "hey"}])
+    assert reply.usage.input_tokens == 200
+    assert reply.usage.output_tokens == 50
+
+
+@pytest.mark.asyncio
+async def test_missing_usage_leaves_reply_usage_none():
+    async def fake_create(**params):
+        return _openai_style_response(content="hi", tool_calls=None)
+
+    provider = OpenAICompatibleProvider.__new__(OpenAICompatibleProvider)
+    provider.client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))
+    )
+    provider.model = "test-model"
+
+    reply = await provider.chat([{"role": "user", "content": "hey"}])
+    assert reply.usage is None
+
+
 class TestFactory:
     def test_unknown_provider_raises(self):
         with pytest.raises(ValueError):

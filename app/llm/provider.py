@@ -28,7 +28,8 @@ import httpx
 
 from app.core.config import settings
 from app.core.logger import logger
-from app.llm.types import LLMReply, ToolCall, ToolSpec
+from app.llm import costs
+from app.llm.types import LLMReply, ToolCall, ToolSpec, Usage
 
 
 class ProviderNotConfigured(Exception):
@@ -277,7 +278,15 @@ class OpenAICompatibleProvider(LLMProvider):
             except json.JSONDecodeError:
                 args = {}
             calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
-        return LLMReply(text=msg.content or "", tool_calls=calls)
+
+        usage = None
+        if getattr(response, "usage", None) is not None:
+            usage = Usage(
+                input_tokens=response.usage.prompt_tokens or 0,
+                output_tokens=response.usage.completion_tokens or 0,
+            )
+            costs.record(self.provider_label, params["model"], usage)
+        return LLMReply(text=msg.content or "", tool_calls=calls, usage=usage)
 
 
 class GroqProvider(OpenAICompatibleProvider):
@@ -340,8 +349,16 @@ class AnthropicProvider(LLMProvider):
             logger.error(f"Claude API call failed: {e}")
             raise
 
+        usage = None
+        if getattr(response, "usage", None) is not None:
+            usage = Usage(
+                input_tokens=response.usage.input_tokens or 0,
+                output_tokens=response.usage.output_tokens or 0,
+            )
+            costs.record("Claude", model, usage)
+
         if response.stop_reason == "refusal":
-            return LLMReply(text="I can't help with that one.")
+            return LLMReply(text="I can't help with that one.", usage=usage)
 
         text = "".join(b.text for b in response.content if b.type == "text")
         calls = [
@@ -351,7 +368,7 @@ class AnthropicProvider(LLMProvider):
         ]
         # Keep native blocks (incl. thinking) for verbatim replay next turn.
         raw = [b.model_dump() for b in response.content] if calls else None
-        return LLMReply(text=text, tool_calls=calls, raw_content=raw)
+        return LLMReply(text=text, tool_calls=calls, raw_content=raw, usage=usage)
 
 
 class GeminiProvider(LLMProvider):
@@ -416,7 +433,16 @@ class GeminiProvider(LLMProvider):
             if "functionCall" in p
         ]
         raw = parts if calls else None
-        return LLMReply(text=text, tool_calls=calls, raw_content=raw)
+
+        usage = None
+        meta = data.get("usageMetadata")
+        if meta:
+            usage = Usage(
+                input_tokens=meta.get("promptTokenCount", 0),
+                output_tokens=meta.get("candidatesTokenCount", 0),
+            )
+            costs.record("Gemini", model, usage)
+        return LLMReply(text=text, tool_calls=calls, raw_content=raw, usage=usage)
 
 
 # ── factory ───────────────────────────────────────────────

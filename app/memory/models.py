@@ -15,6 +15,10 @@ class Conversation(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     title: Mapped[str] = mapped_column(String(255), default="New Conversation")
+    # Rolling summary of older turns; messages with id <= summary_until_id
+    # are covered by it and stay out of the prompt window.
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    summary_until_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
 
     messages: Mapped[List["Message"]] = relationship(

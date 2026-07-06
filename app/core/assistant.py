@@ -10,7 +10,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from app.core import tiers, toolkit
+from app.core import context, tiers, toolkit
 from app.core.logger import logger
 from app.core.tiers import Tier
 from app.llm.provider import ProviderNotConfigured, get_llm_provider
@@ -88,6 +88,7 @@ HELP_TEXT = (
     "| `/scan` | Scan the web for internship listings |\n"
     "| `/notifications` | View proactive alerts |\n"
     "| `/provider name` | Switch LLM provider (groq, openai, gemini, claude) |\n"
+    "| `/cost` | Session token usage and cost per model |\n"
     "| `/help` | Show this help |\n"
 )
 
@@ -130,15 +131,15 @@ class FridayAssistant:
         if pending is not None:
             reply = await self._resolve_pending(conversation_id, pending, user_message, cleaned_msg)
         else:
-            history = MemoryManager.get_messages(conversation_id)
-            messages = self._build_prompt_context(history)
+            messages = self._build_prompt_context(conversation_id)
             reply = await self._run_tool_loop(conversation_id, messages)
 
         MemoryManager.add_message(conversation_id, "assistant", reply)
 
-        # background memory extraction
+        # background housekeeping: memory extraction + rolling summary
         from app.agents.memory_agent import MemoryAgent
         asyncio.create_task(MemoryAgent().extract_and_save_memories(conversation_id))
+        asyncio.create_task(self._maybe_summarize(conversation_id))
 
         return reply
 
@@ -245,19 +246,49 @@ class FridayAssistant:
         lines.append('Reply **yes** to approve, anything else to skip.')
         return "\n".join(lines)
 
-    def _build_prompt_context(self, history: List) -> List[Dict[str, Any]]:
-        """System prompt + long-term memories + recent turns."""
-        system_prompt = SYSTEM_PROMPT
+    def _build_prompt_context(self, conversation_id: int) -> List[Dict[str, Any]]:
+        """Layered prompt, stable to volatile: byte-identical system prompt
+        first (cache-friendly prefix), then a context block with the rolling
+        summary and the memories relevant to the latest message, then the
+        verbatim window of unsummarized turns."""
+        conv = MemoryManager.get_conversation(conversation_id)
+        summary = conv.summary if conv else None
+        after_id = (conv.summary_until_id if conv else None) or 0
 
-        memories = MemoryManager.get_memory_items()
-        if memories:
-            memory_str = "\n".join(f"- [{m.category}]: {m.content}" for m in memories)
-            system_prompt += f"\nWhat you know about your person (verified facts):\n{memory_str}\n"
+        history = MemoryManager.get_messages_after(conversation_id, after_id)
+        recent = history[-context.RECENT_WINDOW:]
 
-        messages: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
-        for msg in history[-10:]:
-            messages.append({"role": msg.role, "content": msg.content})
-        return messages
+        query = next((m.content for m in reversed(recent) if m.role == "user"), "")
+        memories = context.select_memories(MemoryManager.get_memory_items(), query)
+
+        return context.build_messages(SYSTEM_PROMPT, summary, memories, recent)
+
+    async def _maybe_summarize(self, conversation_id: int) -> None:
+        """Fold old turns into the rolling summary once enough pile up.
+
+        Runs in the background after a reply; never raises (a failed
+        summary just means the fold retries after the next message).
+        """
+        try:
+            conv = MemoryManager.get_conversation(conversation_id)
+            if conv is None or self.provider is None:
+                return
+            after_id = conv.summary_until_id or 0
+            history = MemoryManager.get_messages_after(conversation_id, after_id)
+            if len(history) < context.SUMMARY_TRIGGER:
+                return
+            to_fold = history[:-context.RECENT_WINDOW]
+            if not to_fold:
+                return
+            summary = await context.summarize(self.provider, conv.summary, to_fold)
+            if summary:
+                MemoryManager.set_summary(conversation_id, summary, to_fold[-1].id)
+                logger.info(
+                    f"Folded {len(to_fold)} messages into the summary of "
+                    f"conversation {conversation_id} (until id {to_fold[-1].id})"
+                )
+        except Exception as e:
+            logger.warning(f"Rolling summary update failed: {e}")
 
     # ── slash commands (no LLM cost) ──────────────────────
 
@@ -344,6 +375,10 @@ class FridayAssistant:
                 reply += f"{marker} **{n.title}** ({time_str})\n{n.message}\n\n"
             MemoryManager.mark_notifications_read()
             return reply
+
+        if cleaned_msg in ("/cost", "/usage"):
+            from app.llm import costs
+            return costs.session_report()
 
         if cleaned_msg.startswith("/provider"):
             parts = user_message.split(maxsplit=1)

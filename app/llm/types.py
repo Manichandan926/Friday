@@ -6,7 +6,14 @@ own wire format (OpenAI function calling, Anthropic tool use, Gemini
 function declarations).
 """
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+
+
+@dataclass
+class Usage:
+    """Token counts for one API call, as reported by the provider."""
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 @dataclass
@@ -37,3 +44,4 @@ class LLMReply:
     text: str = ""
     tool_calls: List[ToolCall] = field(default_factory=list)
     raw_content: Any = None
+    usage: Optional[Usage] = None

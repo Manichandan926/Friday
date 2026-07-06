@@ -3,7 +3,8 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from app.core.assistant import MAX_TOOL_ROUNDS, FridayAssistant
+from app.core import context
+from app.core.assistant import MAX_TOOL_ROUNDS, SYSTEM_PROMPT, FridayAssistant
 from app.llm.provider import LLMProvider
 from app.llm.types import LLMReply, ToolCall, ToolSpec
 from app.memory.memory_manager import MemoryManager
@@ -238,6 +239,93 @@ async def test_slash_command_does_not_consume_pending_approval(write_root):
     reply = await assistant.chat(conv.id, "/approve")
     assert reply == "Created."
     assert target.exists()
+
+
+# ── context engine (milestone 3) ──────────────────────────
+
+@pytest.mark.asyncio
+async def test_system_prompt_is_byte_stable_and_memories_ride_separately():
+    MemoryManager.add_memory_item("preference", "Likes Rust for systems work")
+    assistant = _assistant([LLMReply(text="hi"), LLMReply(text="again")])
+    conv = MemoryManager.create_conversation("t")
+
+    await assistant.chat(conv.id, "tell me about rust")
+    await assistant.chat(conv.id, "and about go?")
+
+    fake: FakeProvider = assistant.provider  # type: ignore[assignment]
+    for request in fake.requests:
+        # cacheable prefix: first message is the static prompt, untouched
+        assert request[0] == {"role": "system", "content": SYSTEM_PROMPT}
+    # volatile context block is its own second system message
+    second = fake.requests[0][1]
+    assert second["role"] == "system"
+    assert "Likes Rust for systems work" in second["content"]
+
+
+@pytest.mark.asyncio
+async def test_memory_recall_is_selective_not_everything():
+    for i in range(context.MEMORY_LIMIT + 5):
+        MemoryManager.add_memory_item("misc", f"unrelated fact number {i}")
+    MemoryManager.add_memory_item("preference", "Favorite editor is Neovim")
+    assistant = _assistant([LLMReply(text="ok")])
+    conv = MemoryManager.create_conversation("t")
+
+    await assistant.chat(conv.id, "which editor do I use, neovim right?")
+
+    fake: FakeProvider = assistant.provider  # type: ignore[assignment]
+    block = fake.requests[0][1]["content"]
+    assert "Favorite editor is Neovim" in block  # the relevant one made the cut
+    injected = [line for line in block.splitlines() if line.startswith("- [")]
+    assert len(injected) == context.MEMORY_LIMIT  # ...but not the whole store
+
+
+@pytest.mark.asyncio
+async def test_rolling_summary_folds_old_turns(monkeypatch):
+    monkeypatch.setattr(context, "SUMMARY_TRIGGER", 6)
+    monkeypatch.setattr(context, "RECENT_WINDOW", 2)
+    assistant = _assistant([LLMReply(text="A concise summary of the old turns.")])
+    conv = MemoryManager.create_conversation("t")
+    for i in range(3):
+        MemoryManager.add_message(conv.id, "user", f"question {i}")
+        MemoryManager.add_message(conv.id, "assistant", f"answer {i}")
+
+    await assistant._maybe_summarize(conv.id)
+
+    stored = MemoryManager.get_conversation(conv.id)
+    assert stored.summary == "A concise summary of the old turns."
+    remaining = MemoryManager.get_messages_after(conv.id, stored.summary_until_id)
+    assert [m.content for m in remaining] == ["question 2", "answer 2"]
+
+    # the next prompt carries the summary block plus only the verbatim window
+    messages = assistant._build_prompt_context(conv.id)
+    assert "A concise summary of the old turns." in messages[1]["content"]
+    assert [m["content"] for m in messages[2:]] == ["question 2", "answer 2"]
+
+
+@pytest.mark.asyncio
+async def test_summary_not_triggered_below_threshold():
+    assistant = _assistant([])  # any LLM call would pop from an empty list
+    conv = MemoryManager.create_conversation("t")
+    MemoryManager.add_message(conv.id, "user", "hi")
+
+    await assistant._maybe_summarize(conv.id)
+
+    assert MemoryManager.get_conversation(conv.id).summary is None
+
+
+@pytest.mark.asyncio
+async def test_cost_command_reports_session_usage():
+    from app.llm import costs
+    from app.llm.types import Usage
+    costs.reset()
+    costs.record("Groq", "llama-3.3-70b-versatile", Usage(120, 40))
+
+    assistant = _assistant([])
+    conv = MemoryManager.create_conversation("t")
+    reply = await assistant.chat(conv.id, "/cost")
+
+    assert "llama-3.3-70b-versatile" in reply
+    assert "120" in reply
 
 
 @pytest.mark.asyncio
