@@ -88,6 +88,16 @@ def main() -> None:
     parser.add_argument("--no-ui", action="store_true", help=argparse.SUPPRESS)  # legacy; terminal is the default
     args = parser.parse_args()
 
+    # Interactive terminal chat is the only mode that shares stdout with the
+    # user; silence console logging there so it doesn't interleave with the
+    # conversation (the file log still records everything). --headless is a
+    # service with no chat to protect, and --ui has its own window, so both
+    # keep console logging.
+    interactive = not args.ui and not args.headless
+    if interactive:
+        from app.core.logger import disable_console_logging
+        disable_console_logging()
+
     logger.info("Starting FRIDAY Core Service...")
 
     init_db()

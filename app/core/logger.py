@@ -33,5 +33,21 @@ def setup_logger(name: str = "friday") -> logging.Logger:
     
     return logger
 
+
+def disable_console_logging(name: str = "friday") -> None:
+    """Detach console (stream) handlers, leaving file logging intact.
+
+    Used in interactive terminal mode so log lines don't interleave with the
+    chat. The rotating file handler still records everything, so nothing is
+    lost — it just stops going to the console. A no-op if already detached.
+    RotatingFileHandler subclasses StreamHandler, so we match the plain
+    StreamHandler specifically (not FileHandler) to avoid removing the file log.
+    """
+    lg = logging.getLogger(name)
+    for handler in list(lg.handlers):
+        if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
+            lg.removeHandler(handler)
+
+
 # Primary logger instance for the application
 logger = setup_logger()

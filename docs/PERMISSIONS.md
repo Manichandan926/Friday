@@ -97,7 +97,8 @@ accident — the suite goes red. Steps:
 Stated plainly, because a permission doc that hides holes is worse than
 none. These are real and confirmed by testing, not hypotheticals.
 
-**Closed 2026-07-06:**
+**Closed and live-verified 2026-07-06** (proven against the running app in a
+real terminal session, not only the test suite):
 
 - ~~**Command substitution bypasses the tier classifier.**~~ Fixed.
   `has_command_substitution()` in `shell.py` refuses any command containing
@@ -107,10 +108,13 @@ none. These are real and confirmed by testing, not hypotheticals.
   Covers `/run` and the tool loop. Adversarial tests in `test_tiers.py`
   (`test_command_substitution_is_never`, `test_substitution_blocked_at_the_
   executor_too`) smuggle `python3`/`touch` via `echo`, backticks, and nested
-  `$()`.
+  `$()`. Live check: `/run echo $(touch ~/x)` was refused at the real `/run`
+  boundary and created no file.
 - ~~**Approval matching is brittle.**~~ Fixed — see the approval-flow section
-  above; `interpret_approval_reply` now matches by intent and re-asks on
-  ambiguity instead of silently dropping the held action.
+  above; `interpret_approval_reply` matches by intent and re-asks on
+  ambiguity instead of silently dropping the held action. Live check: in a
+  real session, "hmm, not sure" re-asked and held the pending write, then
+  "yeah go for it" approved and wrote it.
 
 **Still open:**
 
