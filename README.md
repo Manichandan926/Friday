@@ -101,6 +101,15 @@ Phases 2.8–3.3 built an actor/event-sourcing substrate that is currently
 **frozen** — tested but not wired into the chat path. See
 `docs/adr/ADR-006-phase1-freeze.md`.
 
+## Documentation
+
+- [`docs/SETUP.md`](docs/SETUP.md) — install, configure, run (start here)
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how the pieces fit and why
+- [`docs/PERMISSIONS.md`](docs/PERMISSIONS.md) — the tier model, adding a
+  tool, and known gaps
+- [`docs/adr/`](docs/adr/) — decision records (why tiers live in the
+  executor, why Rust, why cloud-brain/local-body, …)
+
 ## License
 
 MIT
