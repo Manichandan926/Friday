@@ -18,7 +18,7 @@ import shlex
 from enum import IntEnum
 from typing import Any, Dict, Optional
 
-from app.core.shell import is_command_safe
+from app.core.shell import has_command_substitution, is_command_safe
 
 
 class Tier(IntEnum):
@@ -82,6 +82,15 @@ def classify_command(command: str) -> Tier:
     """Tier a shell command: read-only → AUTO, write-capable-but-whitelisted
     → CONFIRM, blocked patterns or unknown commands → NEVER."""
     if not command or not command.strip():
+        return Tier.NEVER
+
+    # Command substitution / expansion means the surface command isn't what
+    # runs — the base-command and whitelist checks below would reason about
+    # `echo` while `$(...)` executes something else entirely. That's a
+    # compromised parsing surface, so it's NEVER, not merely CONFIRM.
+    # (is_command_safe() also enforces this; kept explicit here so the tier
+    # classifier states the rule itself and doesn't depend on call order.)
+    if has_command_substitution(command):
         return Tier.NEVER
 
     # Reuse the existing validator (C-accelerated): anything it blocks —

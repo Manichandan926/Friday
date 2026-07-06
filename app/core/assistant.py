@@ -7,6 +7,7 @@ needs (system stats, tasks, emails, shell diagnostics, ...), FRIDAY executes
 them, and the model answers from real data.
 """
 import asyncio
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -20,13 +21,69 @@ from app.memory.memory_manager import MemoryManager
 # How many rounds of tool calls one user message may trigger.
 MAX_TOOL_ROUNDS = 6
 
-# Replies that count as approval of a pending Tier-2 proposal.
-APPROVAL_WORDS = {
-    "yes", "y", "ok", "okay", "approve", "/approve",
-    "go ahead", "do it", "sure", "confirm", "yes please",
+# Resolving a pending Tier-2 proposal is intent classification, not exact
+# string matching. First-word (or first-two-word phrase) sets, matched after
+# punctuation is stripped, so "yeah", "yes.", "Yes, go ahead" and "ok do it"
+# all approve — while a genuinely non-committal reply ("maybe", "not sure",
+# "wait") is treated as UNCLEAR and re-asked rather than silently dropping
+# the held action.
+_APPROVAL_WORDS = {
+    "yes", "y", "yeah", "yep", "yup", "ya", "ok", "okay", "k", "kk",
+    "sure", "approve", "approved", "confirm", "confirmed", "affirmative", "aye",
 }
-# Bare declines: pending actions are skipped and nothing else was asked.
-DECLINE_WORDS = {"no", "n", "nope", "skip", "cancel", "don't", "dont", "deny"}
+_APPROVAL_PHRASES = {
+    "go ahead", "do it", "do that", "sounds good", "please do", "yes please",
+    "go for it", "make it so", "go on", "carry on",
+}
+_DECLINE_WORDS = {
+    "no", "n", "nope", "nah", "naw", "don't", "dont", "cancel",
+    "skip", "stop", "deny", "negative", "abort", "nevermind",
+}
+_DECLINE_PHRASES = {
+    "no thanks", "never mind", "forget it", "leave it", "not now",
+    "don't bother", "dont bother", "hold off", "not yet",
+}
+# Reply clearly poses a different question/instruction → skip the held action
+# and answer it (not a silent drop: the model is told the action was declined).
+_QUESTION_WORDS = {
+    "what", "when", "where", "why", "how", "who", "whom", "whose", "which",
+    "can", "could", "would", "should", "is", "are", "am", "was", "were",
+    "does", "did", "will", "tell", "show", "give", "explain", "list", "find",
+}
+
+# Outcomes of interpreting a reply to a pending proposal.
+APPROVE, DECLINE, NEW_REQUEST, UNCLEAR = "approve", "decline", "new_request", "unclear"
+
+
+def interpret_approval_reply(raw: str) -> str:
+    """Classify a reply to a pending Tier-2 proposal.
+
+    Returns APPROVE / DECLINE / NEW_REQUEST / UNCLEAR. UNCLEAR is the case
+    that must never silently drop the pending action — the caller re-asks.
+    """
+    cleaned = raw.strip().lower()
+    if cleaned == "/approve":
+        return APPROVE
+    # strip punctuation to bare words: "yes, go ahead!" -> "yes go ahead"
+    norm = re.sub(r"[^\w\s']", " ", cleaned).strip()
+    if not norm:
+        return UNCLEAR
+
+    tokens = norm.split()
+    first = tokens[0]
+    first_two = " ".join(tokens[:2])
+
+    if first in _APPROVAL_WORDS or first_two in _APPROVAL_PHRASES:
+        return APPROVE
+    if first in _DECLINE_WORDS or first_two in _DECLINE_PHRASES:
+        return DECLINE
+
+    # A real question or a multi-word instruction is a deliberate new request.
+    if cleaned.rstrip().endswith("?") or first in _QUESTION_WORDS or len(tokens) >= 4:
+        return NEW_REQUEST
+
+    # Short, non-committal ("maybe", "not sure", "hmm", "wait") — don't guess.
+    return UNCLEAR
 
 
 @dataclass
@@ -109,7 +166,8 @@ class FridayAssistant:
         cleaned_msg = user_message.strip().lower()
 
         # Slash commands first — /help etc. must not consume a pending approval.
-        if cleaned_msg.startswith("/") and cleaned_msg not in APPROVAL_WORDS:
+        # ("/approve" classifies as APPROVE, so it falls through to the pending.)
+        if cleaned_msg.startswith("/") and interpret_approval_reply(user_message) != APPROVE:
             reply = await self._handle_command(user_message, cleaned_msg)
             if reply is not None:
                 MemoryManager.add_message(conversation_id, "user", user_message)
@@ -150,9 +208,19 @@ class FridayAssistant:
         user_message: str,
         cleaned_msg: str,
     ) -> str:
-        """The user answered a Tier-2 proposal: execute or decline the held
-        calls, then hand control back to the model."""
-        approved = cleaned_msg in APPROVAL_WORDS
+        """The user answered a Tier-2 proposal. Four outcomes:
+        approve → run held calls; decline → skip and tell the model; a clear
+        new request → skip and answer it; anything genuinely non-committal →
+        re-ask, keeping the proposal alive (never a silent drop)."""
+        intent = interpret_approval_reply(user_message)
+
+        if intent == UNCLEAR:
+            # Put the proposal back exactly as it was and ask again — the
+            # held calls are untouched, so nothing is lost or wrongly run.
+            self._pending[conversation_id] = pending
+            return self._reask_text(pending.calls)
+
+        approved = intent == APPROVE
         messages = pending.messages
 
         for call in pending.calls:
@@ -168,12 +236,20 @@ class FridayAssistant:
                 "content": result,
             })
 
-        # A reply that is neither approval nor a bare "no" is a new request —
-        # pass it along so the model can answer it after acknowledging.
-        if not approved and cleaned_msg not in DECLINE_WORDS:
+        # A clear new request (not a bare decline) rides along so the model
+        # can answer it after acknowledging the skipped action.
+        if intent == NEW_REQUEST:
             messages.append({"role": "user", "content": user_message})
 
         return await self._run_tool_loop(conversation_id, messages)
+
+    @staticmethod
+    def _reask_text(calls: List[ToolCall]) -> str:
+        lines = ["I didn't catch that as a yes or no, so I've held off. I still want to:"]
+        for i, call in enumerate(calls, 1):
+            lines.append(f"  {i}. {tiers.describe_call(call.name, call.arguments)}")
+        lines.append('Reply **yes** to go ahead, **no** to skip it.')
+        return "\n".join(lines)
 
     # ── agentic tool loop ─────────────────────────────────
 

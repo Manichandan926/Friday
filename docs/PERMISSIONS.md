@@ -63,9 +63,12 @@ Your next message resolves it. An approval word (`yes`, `ok`, `approve`,
 if what you typed wasn't a bare "no", it's also passed along as a new
 request. Approval is **batch, all-or-nothing** per round.
 
-> ⚠️ The approval-word list is an exact-match set. `yes.` `yeah` and
-> `Yes, go ahead` are **not** currently recognized as approval — they skip
-> the action. This is a known rough edge; see Known gaps.
+Approval is interpreted by intent, not exact strings (`interpret_approval_
+reply` in `assistant.py`): punctuation is stripped and the first word / first
+two-word phrase are matched, so `yes.`, `yeah`, `Yes, go ahead`, and `ok do
+it` all approve. A clear new question or instruction skips the held action
+and gets answered. A genuinely non-committal reply (`maybe`, `not sure`,
+`wait`) is **re-asked** — the proposal stays alive, never silently dropped.
 
 ## Adding a new tool — do this, in order
 
@@ -94,22 +97,28 @@ accident — the suite goes red. Steps:
 Stated plainly, because a permission doc that hides holes is worse than
 none. These are real and confirmed by testing, not hypotheticals.
 
-- **Command substitution bypasses the tier classifier.** `classify_command`
-  parses the base command and pipe segments but not `$(...)` or backticks.
-  A write-capable command smuggled inside substitution is classified AUTO
-  and runs with no approval — e.g. `echo $(python3 -c "...")` executes
-  arbitrary Python at Tier 1. This is the same class of hole as the original
-  whitelist leaks and needs the same fix: detect substitution in the
-  classifier (treat any command containing `$(`, `` ` ``, or `${` as at
-  least CONFIRM, ideally NEVER), backed by an adversarial test. **Highest-
-  priority hardening item.**
+**Closed 2026-07-06:**
+
+- ~~**Command substitution bypasses the tier classifier.**~~ Fixed.
+  `has_command_substitution()` in `shell.py` refuses any command containing
+  `$(`, `` ` ``, `${`, `<(`, `>(`, or `$((` — checked first in
+  `is_command_safe()` (before the native validator, so nothing looser can
+  wave it through) and again explicitly in `classify_command()` as NEVER.
+  Covers `/run` and the tool loop. Adversarial tests in `test_tiers.py`
+  (`test_command_substitution_is_never`, `test_substitution_blocked_at_the_
+  executor_too`) smuggle `python3`/`touch` via `echo`, backticks, and nested
+  `$()`.
+- ~~**Approval matching is brittle.**~~ Fixed — see the approval-flow section
+  above; `interpret_approval_reply` now matches by intent and re-asks on
+  ambiguity instead of silently dropping the held action.
+
+**Still open:**
+
 - **`watch_directory` has no path scope.** It can watch any readable
   directory (`/etc`, `~/.ssh`), unlike `write_file` which is confined to
-  `ALLOWED_WRITE_ROOTS`. It's read-only observation so lower severity, but
-  it's an information-gathering capability at AUTO with no boundary —
-  inconsistent with the rest of the design. Consider a watch allow-list.
-- **Approval matching is brittle** (see the warning above). Natural
-  confirmations fail closed (the action is skipped, not wrongly run), so
-  this is a trust/UX problem, not a safety one — but for a system whose
-  whole pitch is "asks before acting", the asking should actually work on
-  normal human phrasing.
+  `ALLOWED_WRITE_ROOTS`. Read-only observation, so lower severity, but it's
+  an information-gathering capability at AUTO with no boundary — inconsistent
+  with the rest of the design. Consider a `WATCHABLE_ROOTS` allow-list.
+- **The pure-Python daemon fallback is not regression-tested.** The
+  `tools.py` readers' `/proc` fallback (used when no native daemon is up)
+  was verified live once and has no automated coverage.

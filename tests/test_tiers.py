@@ -31,6 +31,31 @@ class TestClassifyCommand:
         assert tiers.classify_command("some_unknown_binary --flag") == Tier.NEVER
         assert tiers.classify_command("") == Tier.NEVER
 
+    def test_command_substitution_is_never(self):
+        # The surface command isn't what runs — a whitelisted `echo` can smuggle
+        # an arbitrary inner command. Every substitution/expansion form is NEVER,
+        # not merely CONFIRM: it's a compromised parsing surface.
+        smuggles = [
+            "echo $(rm -rf ~)",                 # $(...) command substitution
+            "echo `rm -rf ~`",                  # backtick substitution
+            "echo $(python3 -c 'x')",           # write-capable cmd via $()
+            "echo $(touch ~/pwned)",            # side effect via $()
+            "cat ${HOME}/notes",                # ${...} parameter expansion
+            "echo $((1+1))",                    # arithmetic expansion
+            "diff <(ls) <(ls -a)",              # process substitution
+            "echo hi > $(tty)",                 # substitution in a redirect target
+            "echo $(echo $(whoami))",           # nested substitution
+        ]
+        for cmd in smuggles:
+            assert tiers.classify_command(cmd) == Tier.NEVER, cmd
+
+    def test_substitution_blocked_at_the_executor_too(self):
+        # Defense in depth: even called directly (e.g. via /run), the shared
+        # validator refuses substitution before the whitelist is consulted.
+        from app.core.shell import is_command_safe
+        safe, reason = is_command_safe("echo $(python3 -c 'open(\"x\",\"w\")')")
+        assert not safe and "substitution" in reason.lower()
+
 
 class TestClassify:
     def test_read_and_db_tools_are_auto(self):

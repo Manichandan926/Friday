@@ -72,6 +72,22 @@ BLOCKED_PATTERNS = [
 ]
 
 
+# Shell constructs that run an *embedded* command the surface parser never
+# sees: command substitution, process substitution, parameter expansion.
+# Because commands run under `shell=True`, what shlex tokenizes is NOT what
+# executes — `echo $(rm -rf ~)` looks like a harmless echo but runs `rm`.
+# Any command containing one of these is refused outright: the whitelist and
+# tier classifier can't reason about what's inside, so the safe move is to
+# not run it at all. (Legitimate substitution belongs in a real script, not
+# a one-off command FRIDAY runs on your behalf.)
+_SUBSTITUTION_TOKENS = ("$(", "${", "`", "<(", ">(", "$((")
+
+
+def has_command_substitution(command: str) -> bool:
+    """True if the command smuggles an embedded command via substitution."""
+    return any(tok in command for tok in _SUBSTITUTION_TOKENS)
+
+
 def is_command_safe(command: str) -> Tuple[bool, str]:
     """
     Validate if a shell command is safe to execute.
@@ -82,6 +98,12 @@ def is_command_safe(command: str) -> Tuple[bool, str]:
     """
     if not command or not command.strip():
         return False, "Empty command."
+
+    # Refuse shell substitution BEFORE anything else — including the native
+    # validator — so no faster/looser check can wave it through. This is a
+    # parsing-integrity guarantee, not a heuristic: it must not be bypassable.
+    if has_command_substitution(command):
+        return False, "Blocked: command substitution/expansion is not allowed."
 
     # try native C validator first (binary search + strstr, no regex)
     try:

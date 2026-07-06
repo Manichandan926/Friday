@@ -4,7 +4,16 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from app.core import context
-from app.core.assistant import MAX_TOOL_ROUNDS, SYSTEM_PROMPT, FridayAssistant
+from app.core.assistant import (
+    APPROVE,
+    DECLINE,
+    MAX_TOOL_ROUNDS,
+    NEW_REQUEST,
+    SYSTEM_PROMPT,
+    UNCLEAR,
+    FridayAssistant,
+    interpret_approval_reply,
+)
 from app.llm.provider import LLMProvider
 from app.llm.types import LLMReply, ToolCall, ToolSpec
 from app.memory.memory_manager import MemoryManager
@@ -158,6 +167,76 @@ async def test_tier2_decline_skips_and_informs_model(write_root):
     fake: FakeProvider = assistant.provider  # type: ignore[assignment]
     tool_msgs = [m for m in fake.requests[1] if m["role"] == "tool"]
     assert any("declined" in m["content"] for m in tool_msgs)
+
+
+class TestInterpretApprovalReply:
+    @pytest.mark.parametrize("reply", [
+        "yes", "yes.", "yes!", "Yes, go ahead", "yeah", "yep", "sure",
+        "sure thing", "ok", "ok do it", "okay!", "go ahead", "do it",
+        "approve", "/approve", "confirm", "k",
+    ])
+    def test_natural_approvals(self, reply):
+        assert interpret_approval_reply(reply) == APPROVE
+
+    @pytest.mark.parametrize("reply", [
+        "no", "nope", "nah", "no thanks", "skip", "cancel", "don't", "stop it",
+        "never mind", "not now",
+    ])
+    def test_natural_declines(self, reply):
+        assert interpret_approval_reply(reply) == DECLINE
+
+    @pytest.mark.parametrize("reply", [
+        "maybe", "not sure", "hmm", "wait", "idk", "i guess maybe",
+    ])
+    def test_noncommittal_is_unclear(self, reply):
+        assert interpret_approval_reply(reply) == UNCLEAR
+
+    @pytest.mark.parametrize("reply", [
+        "actually, what day is it?", "what time is it", "show me my tasks first",
+        "can you explain what that does?",
+    ])
+    def test_clear_new_requests(self, reply):
+        assert interpret_approval_reply(reply) == NEW_REQUEST
+
+
+@pytest.mark.asyncio
+async def test_tier2_natural_yes_variant_executes(write_root):
+    # "yeah" used to fail exact-match and silently drop the action.
+    target = write_root / "hello.txt"
+    assistant = _assistant([
+        LLMReply(text="", tool_calls=[_write_call(target)]),
+        LLMReply(text="Done."),
+    ])
+    conv = MemoryManager.create_conversation("t")
+
+    await assistant.chat(conv.id, "make the file")
+    reply = await assistant.chat(conv.id, "yeah, go ahead")
+
+    assert reply == "Done."
+    assert target.read_text() == "hello"
+
+
+@pytest.mark.asyncio
+async def test_tier2_unclear_reply_reasks_and_keeps_pending(write_root):
+    target = write_root / "hello.txt"
+    assistant = _assistant([
+        LLMReply(text="", tool_calls=[_write_call(target)]),
+        LLMReply(text="Done."),
+    ])
+    conv = MemoryManager.create_conversation("t")
+
+    await assistant.chat(conv.id, "make the file")
+    reask = await assistant.chat(conv.id, "hmm, not sure")
+
+    # re-asked, nothing ran, proposal still alive — no silent drop
+    assert "yes" in reask.lower() and "no" in reask.lower()
+    assert not target.exists()
+    assert conv.id in assistant._pending
+
+    # a subsequent clear yes still resolves it
+    reply = await assistant.chat(conv.id, "ok yes")
+    assert reply == "Done."
+    assert target.read_text() == "hello"
 
 
 @pytest.mark.asyncio

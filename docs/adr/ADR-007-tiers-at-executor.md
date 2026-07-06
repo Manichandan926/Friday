@@ -37,10 +37,10 @@ trigger its own approval step). The prompt is UX; the executor is safety.
 - Safety survives a compromised, confused, or swapped-out model.
 - The tier map is auditable in one file — you can read exactly what FRIDAY
   will and won't do without tracing code.
-- **Known limitation:** the gate is only as good as the classifier feeding
-  it. `run_shell` classification parses the base command and pipe segments
-  but not command substitution (`$(...)`, backticks), so a write-capable
-  command smuggled inside substitution can currently be classified AUTO.
-  See `docs/PERMISSIONS.md` → Known gaps. This is the same class of hole as
-  the original whitelist leaks and needs the same treatment: close it in
-  the classifier, verify with an adversarial test.
+- The gate is only as good as the classifier feeding it. This bit us once:
+  `run_shell` classification originally ignored command substitution, so
+  `echo $(python3 -c "...")` classified AUTO and ran unapproved. Fixed
+  2026-07-06 — substitution is now refused outright in `is_command_safe()`
+  and treated as NEVER in `classify_command()`, with adversarial tests. The
+  lesson generalizes: when you add a surface, attack it the way the shell
+  whitelist was attacked, don't just read it.
