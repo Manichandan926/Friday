@@ -14,8 +14,8 @@ Defined in `app/core/tiers.py` as `Tier(IntEnum)`:
 
 | Tier | Name | Meaning | Examples |
 |------|------|---------|----------|
-| 1 | `AUTO` | Low risk, reversible. Runs immediately, always audit-logged. | reading system stats, listing tasks, saving a note or memory, watching a folder |
-| 2 | `CONFIRM` | Medium risk. Proposed to you; runs **only** after you approve. | writing a file, creating a directory, a write-capable shell command |
+| 1 | `AUTO` | Low risk, reversible. Runs immediately, always audit-logged. | reading system stats, listing tasks, saving a note or memory, watching a folder, media/volume/brightness, notifications, clipboard, reminders, screenshots, calculator |
+| 2 | `CONFIRM` | Medium risk. Proposed to you; runs **only** after you approve. | writing a file, creating a directory, opening an app or file/link, playing media, a write-capable shell command |
 | 3 | `NEVER` | High risk / hard to undo. Refused **always**, even if approval is somehow passed. | deletion, `sudo`, disk writes, anything not on the shell whitelist |
 
 Two principles make this trustworthy:

@@ -61,6 +61,23 @@ TOOL_TIERS: Dict[str, Tier] = {
     "unwatch_directory": Tier.AUTO,
     "list_watched_directories": Tier.AUTO,
     "get_file_events": Tier.AUTO,
+    # desktop control — reversible, low-harm device/UI state
+    "media_control": Tier.AUTO,
+    "get_volume": Tier.AUTO,
+    "set_volume": Tier.AUTO,
+    "toggle_mute": Tier.AUTO,
+    "get_brightness": Tier.AUTO,
+    "set_brightness": Tier.AUTO,
+    "send_notification": Tier.AUTO,
+    "take_screenshot": Tier.AUTO,  # additive: writes a fresh timestamped PNG
+    "get_clipboard": Tier.AUTO,
+    "set_clipboard": Tier.AUTO,
+    "calculate": Tier.AUTO,
+    "set_reminder": Tier.AUTO,  # just creates a task, like add_task
+    # desktop control — launches/opens things → confirm first
+    "open_app": Tier.CONFIRM,
+    "open_path": Tier.CONFIRM,
+    "play_media": Tier.CONFIRM,
     # filesystem writes (backed up on overwrite, home-dir only)
     "write_file": Tier.CONFIRM,
     "create_directory": Tier.CONFIRM,
@@ -138,5 +155,11 @@ def describe_call(tool_name: str, arguments: Optional[Dict[str, Any]]) -> str:
         return f"write file `{args.get('path', '?')}` ({len(content)} chars)"
     if tool_name == "create_directory":
         return f"create directory `{args.get('path', '?')}`"
+    if tool_name == "open_app":
+        return f"open the app `{args.get('name', '?')}`"
+    if tool_name == "open_path":
+        return f"open `{args.get('target', '?')}`"
+    if tool_name == "play_media":
+        return f"play `{args.get('target', '?')}` in mpv"
     rendered = ", ".join(f"{k}={v!r}" for k, v in args.items())
     return f"{tool_name}({rendered})"

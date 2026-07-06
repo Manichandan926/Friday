@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from app.core import tiers, tools as data_tools
+from app.core import desktop, tiers, tools as data_tools
 from app.core.logger import logger
 from app.core.tiers import Tier
 from app.llm.types import ToolSpec
@@ -343,6 +343,131 @@ def _get_file_events() -> str:
     if events is None:
         return _WATCHER_DOWN
     return "\n".join(events) if events else "No file events since the last check."
+
+
+# ── desktop control (media, volume, apps, …) ─────────────
+
+_register(
+    "media_control",
+    "Control the media player currently running (Spotify, browser, mpv, VLC, …). "
+    "action is one of: play, pause, toggle, next, previous, stop, status.",
+    params={"action": {"type": "string", "description": "play | pause | toggle | next | previous | stop | status"}},
+    required=["action"],
+)(lambda action: desktop.media_control(action))
+
+_register("get_volume", "The current output volume percentage and mute state.")(desktop.get_volume)
+
+_register(
+    "set_volume",
+    "Set the output volume to a percentage (0–100).",
+    params={"level": {"type": "integer", "description": "Volume percent, 0–100."}},
+    required=["level"],
+)(lambda level: desktop.set_volume(level))
+
+_register("toggle_mute", "Toggle the output audio mute on/off.")(desktop.toggle_mute)
+
+_register("get_brightness", "The current screen brightness percentage.")(desktop.get_brightness)
+
+_register(
+    "set_brightness",
+    "Set the screen brightness to a percentage (1–100).",
+    params={"percent": {"type": "integer", "description": "Brightness percent, 1–100."}},
+    required=["percent"],
+)(lambda percent: desktop.set_brightness(percent))
+
+_register(
+    "send_notification",
+    "Show a desktop notification popup to the user.",
+    params={
+        "title": {"type": "string", "description": "Notification title."},
+        "message": {"type": "string", "description": "Optional body text."},
+    },
+    required=["title"],
+)(lambda title, message="": desktop.send_notification(title, message))
+
+_register(
+    "take_screenshot",
+    "Capture the full screen to a timestamped PNG under ~/Pictures/Screenshots "
+    "and report where it was saved.",
+)(desktop.take_screenshot)
+
+_register("get_clipboard", "Read the current text contents of the clipboard.")(desktop.get_clipboard)
+
+_register(
+    "set_clipboard",
+    "Copy text to the clipboard so the user can paste it.",
+    params={"text": {"type": "string", "description": "Text to copy."}},
+    required=["text"],
+)(lambda text: desktop.set_clipboard(text))
+
+_register(
+    "calculate",
+    "Evaluate a plain arithmetic expression (+ - * / // % ** and parentheses). "
+    "Use this for exact math instead of computing it yourself.",
+    params={"expression": {"type": "string", "description": "e.g. (1200*0.18)+50"}},
+    required=["expression"],
+)(lambda expression: desktop.calculate(expression))
+
+
+@_register(
+    "set_reminder",
+    "Remind the user after a number of minutes. Creates a task that fires a "
+    "desktop notification when the time is up. Use for 'remind me in N minutes' "
+    "requests.",
+    params={
+        "minutes": {"type": "integer", "description": "Minutes from now to fire the reminder."},
+        "message": {"type": "string", "description": "What to remind the user about."},
+    },
+    required=["minutes", "message"],
+)
+def _set_reminder(minutes: int, message: str) -> str:
+    try:
+        mins = int(minutes)
+    except (TypeError, ValueError):
+        return "minutes must be a whole number."
+    if mins <= 0:
+        return "The reminder time must be at least 1 minute from now."
+    # The background scheduler (_check_reminders_job) sends notify-send when a
+    # pending task's due_date passes; it compares against UTC now (naive), so
+    # store the same convention here.
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    due = now + datetime.timedelta(minutes=mins)
+    MemoryManager.add_task(title=message, priority="medium", due_date=due)
+    return f"Reminder set — I'll notify you in {mins} min: “{message}”."
+
+
+@_register(
+    "open_app",
+    "Launch a desktop application by name, e.g. 'firefox', 'code', "
+    "'org.gnome.Nautilus'. The user is asked for approval first.",
+    params={"name": {"type": "string", "description": "App .desktop id or common name."}},
+    required=["name"],
+)
+def _open_app(name: str) -> str:
+    return desktop.open_app(name)
+
+
+@_register(
+    "open_path",
+    "Open a file, folder, or http/https web link with the desktop's default "
+    "app (files/folders must be under the user's home). The user is asked for "
+    "approval first.",
+    params={"target": {"type": "string", "description": "A path like ~/Downloads or a URL."}},
+    required=["target"],
+)
+def _open_path(target: str) -> str:
+    return desktop.open_path(target)
+
+
+@_register(
+    "play_media",
+    "Play a local media file (under the user's home) or an http/https stream "
+    "in mpv. The user is asked for approval first.",
+    params={"target": {"type": "string", "description": "A media file path or stream URL."}},
+    required=["target"],
+)
+def _play_media(target: str) -> str:
+    return desktop.play_media(target)
 
 
 # ── public API ────────────────────────────────────────────
