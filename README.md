@@ -1,156 +1,105 @@
 # FRIDAY — Personal AI Assistant
 
-FRIDAY is a desktop AI assistant that runs as a background service on Linux, providing intelligent email analysis, task management, placement tracking, terminal access, and a personal knowledge vault.
+FRIDAY is a terminal-first personal assistant for Linux: a cloud LLM brain
+driving a lean local body — an agentic tool loop, a risk-tiered permission
+system, and a native Rust watcher daemon. Built for and tested on an 8GB
+Fedora KDE laptop; staying lean is a design constraint, not a phase.
 
-## Features
-
-- **Tool-Grounded LLM Chat** — queries are routed through real data tools before hitting the LLM, preventing hallucination
-- **Safe Terminal Access** — sandboxed shell executor with whitelist/blacklist; FRIDAY autonomously picks commands to answer system questions
-- **Gmail Integration** — OAuth2-based inbox sync with automatic priority classification
-- **Placement Tracker** — auto-extracts job/internship applications from emails with deadline risk detection
-- **Knowledge Vault** — store, search, and manage personal notes, interview prep, AWS topics
-- **Project Tracking** — track projects with progress bars and milestones
-- **Proactive Monitoring** — deadline alerts, system health checks, auto-notifications
-- **Internship Scanner** — BeautifulSoup-based web scraper for career pages
-- **PySide6 Dashboard** — desktop GUI with live KPI cards, system stats, and daily briefing
-- **Background Scheduler** — periodic email sync, task reminders, health checks, and database backups
-- **Auto-Start Service** — systemd user service file for boot-time startup
-
-## Architecture
+## How it works
 
 ```
-User Input
+You (terminal)
     ↓
-Intent Router
-    ├── /brief, /plan, /placements     → Direct handlers (no LLM)
-    ├── "what is my RAM?"              → Tool reads /proc → injects into LLM
-    ├── "what is using my RAM?"        → Shell Agent → ps aux → injects into LLM
-    ├── "show my emails"               → Tool reads SQLite → injects into LLM
-    └── "explain binary search"        → Pure LLM (general knowledge)
+FridayAssistant — agentic tool loop (max 6 rounds)
+    ↓ the model decides which tools it needs
+toolkit.execute() — the permission choke point
+    ├── Tier 1 AUTO     reads, DB writes, file watching → runs, audit-logged
+    ├── Tier 2 CONFIRM  file writes, write-capable shell → pauses, asks you
+    └── Tier 3 NEVER    deletion, privilege escalation  → refused, always
+    ↓
+friday_watcher (Rust, ~3MB RSS) — system stats + inotify over a Unix socket
 ```
 
-## Quick Start
+- **Provider-agnostic brain** — Groq (default), OpenAI, Gemini, or Claude;
+  swap live with `/provider <name>`. Tool calls, token usage, and cost are
+  logged per call (`/cost` shows session totals).
+- **Context engine** — rolling conversation summary + selective memory
+  recall keep prompts small; the stable system prompt is cache-friendly.
+- **Tiered permissions in code, not prompt** — the model physically cannot
+  delete files or escalate: those tools don't exist, and the shell gate
+  classifies every command. Tier 2 actions show a ⏸ proposal and wait for
+  your "yes".
+- **Native watcher** — `native/watcher/` (Rust) serves SYSINFO / PROCS /
+  HEALTH / BATTERY / NETWORK / TEMPS plus WATCH/EVENTS file monitoring.
+  The legacy C monitor (`native/friday_monitor.c`) remains as fallback.
+- **Gmail + trackers** — OAuth2 inbox sync, placement/application tracking
+  with deadline alerts, tasks, projects, and a knowledge vault in SQLite.
+
+## Quick start
 
 ```bash
-# create virtual environment
-python -m venv .venv
-source .venv/bin/activate
-
-# install dependencies
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# configure API keys
-cp .env.example .env
-# edit .env with your Groq/OpenAI/Gemini API key
+cp .env.example .env        # add your API key (Groq free tier works)
 
-# start desktop dashboard
-python main.py
+# build the native watcher (optional but recommended)
+cd native/watcher && cargo build --release && cd ../..
 
-# or start in CLI mode
-python main.py --no-ui
+python main.py              # terminal chat (default)
+python main.py --ui         # Qt dashboard, only loads Qt when asked
 ```
 
-## Auto-Start on Boot
+Just talk to it — "how much RAM am I using?", "watch my Downloads folder",
+"save a note that…". Slash commands are free shortcuts that skip the LLM;
+type `/help` for the list.
+
+## Auto-start on boot
 
 ```bash
-# install as systemd user service
 cp friday.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable friday.service
-systemctl --user start friday.service
+systemctl --user enable --now friday.service
 ```
 
-## Commands
+## Tech stack
 
-| Command | Description |
-| --- | --- |
-| `/brief` | Daily briefing |
-| `/emails` | Email inbox summary |
-| `/tasks` | Pending tasks |
-| `/placements` | Application tracker |
-| `/deadlines` | Deadline risk alerts |
-| `/interviews` | Active interviews |
-| `/scan` | Scan web for internships |
-| `/run command` | Execute a safe shell command |
-| `/notifications` | View proactive alerts |
-| `/system` | System info (RAM, CPU, disk) |
-| `/knowledge` | View knowledge vault |
-| `/learn cat \| title \| content` | Add knowledge |
-| `/search query` | Search knowledge |
-| `/projects` | Project progress |
-| `/addproject name \| desc \| %` | Track a project |
-| `/plan request` | Generate task plan |
-| `/help` | Show all commands |
+Python 3.12+ · SQLAlchemy/SQLite · APScheduler · Rust (watcher daemon) ·
+PySide6 (opt-in dashboard) · Groq/OpenAI/Gemini/Anthropic APIs · Gmail API
 
-## Dashboard Views
-
-| View | What it shows |
-| --- | --- |
-| **Home** | KPI cards, system stats, daily brief |
-| **Chat** | LLM conversation with tool routing |
-| **Emails** | Gmail inbox with priority badges |
-| **Tasks** | Task list with create/complete actions |
-| **Knowledge** | Knowledge vault with add/search/delete |
-| **Projects** | Project cards with progress bars |
-| **Memory** | Long-term facts and preferences |
-| **Settings** | API keys and provider config |
-
-## Tech Stack
-
-- **Python 3.12+**
-- **PySide6** — Desktop UI
-- **SQLAlchemy** — ORM + SQLite
-- **APScheduler** — Background jobs
-- **Groq/OpenAI/Gemini** — LLM providers
-- **Google Gmail API** — Email integration
-- **BeautifulSoup4** — Web scraping
-
-## Project Structure
+## Project structure
 
 ```
 FRIDAY/
-├── main.py                    # entry point
-├── friday.service             # systemd auto-start
+├── main.py                    # entry point: terminal chat, --ui for Qt
 ├── app/
 │   ├── core/
-│   │   ├── assistant.py       # intent router + LLM chat
-│   │   ├── tools.py           # real data tools (system, db)
-│   │   ├── shell.py           # sandboxed terminal executor
-│   │   ├── config.py          # settings from .env
-│   │   └── logger.py          # rotating file logger
-│   ├── agents/
-│   │   ├── shell_agent.py     # LLM → command → execute
-│   │   ├── planner_agent.py   # daily briefing generator
-│   │   ├── task_agent.py      # plan-to-tasks converter
-│   │   ├── placement_agent.py # email → application extractor
-│   │   └── memory_agent.py    # conversation fact learner
-│   ├── email/
-│   │   ├── gmail.py           # OAuth2 Gmail connector
-│   │   └── analyzer.py        # LLM email classifier
-│   ├── plugins/
-│   │   └── internship_scanner/
-│   │       └── scanner.py     # BeautifulSoup web scraper
-│   ├── memory/
-│   │   ├── models.py          # SQLAlchemy ORM models
-│   │   ├── memory_manager.py  # database CRUD operations
-│   │   ├── database.py        # engine + session setup
-│   │   └── backup.py          # automated backups
-│   ├── scheduler/
-│   │   └── service.py         # APScheduler background jobs
-│   └── ui/
-│       ├── main_window.py     # PySide6 main window + tray
-│       ├── stylesheet.py      # dark theme CSS
-│       └── views/
-│           ├── home_view.py
-│           ├── chat_view.py
-│           ├── emails_view.py
-│           ├── tasks_view.py
-│           ├── knowledge_view.py
-│           ├── projects_view.py
-│           ├── memory_view.py
-│           └── settings_view.py
-└── requirements.txt
+│   │   ├── assistant.py       # agentic tool loop + approval flow
+│   │   ├── toolkit.py         # tool registry + execution gate
+│   │   ├── tiers.py           # the visible risk-tier config
+│   │   ├── context.py         # rolling summary + memory recall
+│   │   ├── native_bridge.py   # Unix-socket client for the watcher
+│   │   ├── tools.py           # data readers (system, DB)
+│   │   └── shell.py           # whitelisted shell executor
+│   ├── llm/
+│   │   ├── provider.py        # Groq/OpenAI/Gemini/Claude adapters
+│   │   ├── types.py           # neutral ToolSpec/ToolCall/LLMReply
+│   │   └── costs.py           # per-call token/cost accounting
+│   ├── agents/                # planner, task, placement, memory agents
+│   ├── email/                 # OAuth2 Gmail sync + LLM classifier
+│   ├── memory/                # SQLAlchemy models + manager + backups
+│   ├── scheduler/             # APScheduler background jobs
+│   └── ui/                    # PySide6 dashboard (loaded only with --ui)
+├── native/
+│   ├── watcher/               # Rust daemon: stats + inotify (~3MB RSS)
+│   └── friday_monitor.c       # legacy C monitor (fallback)
+├── docs/adr/                  # architecture decision records
+└── tests/                     # pytest suite
 ```
+
+Phases 2.8–3.3 built an actor/event-sourcing substrate that is currently
+**frozen** — tested but not wired into the chat path. See
+`docs/adr/ADR-006-phase1-freeze.md`.
 
 ## License
 

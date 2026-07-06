@@ -62,6 +62,18 @@ def is_daemon_running() -> bool:
     return _query_daemon("HEALTH") is not None
 
 
+def daemon_kind() -> Optional[str]:
+    """Which native daemon is serving: "rust", "c", or None.
+
+    Only the Rust watcher speaks PING; the C monitor answers HEALTH only.
+    """
+    if _query_socket(WATCHER_SOCK, "PING"):
+        return "rust"
+    if _query_socket(MONITOR_SOCK, "HEALTH"):
+        return "c"
+    return None
+
+
 def get_sysinfo_native() -> Optional[str]:
     """Get system info from the native daemon."""
     return _query_daemon("SYSINFO")

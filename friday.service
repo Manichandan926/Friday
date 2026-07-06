@@ -5,7 +5,7 @@ Wants=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/Projects/FRIDAY/.venv/bin/python %h/Projects/FRIDAY/main.py
+ExecStart=%h/Projects/FRIDAY/.venv/bin/python %h/Projects/FRIDAY/main.py --headless
 WorkingDirectory=%h/Projects/FRIDAY
 Restart=on-failure
 RestartSec=5
