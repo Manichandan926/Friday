@@ -56,6 +56,11 @@ TOOL_TIERS: Dict[str, Tier] = {
     "save_knowledge": Tier.AUTO,
     "add_project": Tier.AUTO,
     "add_application": Tier.AUTO,
+    # file watching — passive observation via the native watcher daemon
+    "watch_directory": Tier.AUTO,
+    "unwatch_directory": Tier.AUTO,
+    "list_watched_directories": Tier.AUTO,
+    "get_file_events": Tier.AUTO,
     # filesystem writes (backed up on overwrite, home-dir only)
     "write_file": Tier.CONFIRM,
     "create_directory": Tier.CONFIRM,

@@ -275,6 +275,66 @@ def _create_directory(path: str) -> str:
     return f"Directory ready: {dest}"
 
 
+# ── file watching (Rust watcher daemon) ───────────────────
+
+_WATCHER_DOWN = (
+    "The file watcher daemon isn't running, so file watching is unavailable "
+    "right now. It starts automatically with FRIDAY."
+)
+
+
+@_register(
+    "watch_directory",
+    "Start watching a directory for file changes (created/modified/deleted/"
+    "moved). Passive observation only — nothing is touched. Events are "
+    "collected in the background and read with get_file_events.",
+    params={"path": {"type": "string", "description": "Directory to watch, e.g. ~/Downloads."}},
+    required=["path"],
+)
+def _watch_directory(path: str) -> str:
+    from app.core import native_bridge
+    reply = native_bridge.watch_directory(str(Path(path).expanduser()))
+    return reply.strip() if reply else _WATCHER_DOWN
+
+
+@_register(
+    "unwatch_directory",
+    "Stop watching a directory previously added with watch_directory.",
+    params={"path": {"type": "string", "description": "Directory to stop watching."}},
+    required=["path"],
+)
+def _unwatch_directory(path: str) -> str:
+    from app.core import native_bridge
+    reply = native_bridge.unwatch_directory(str(Path(path).expanduser()))
+    return reply.strip() if reply else _WATCHER_DOWN
+
+
+@_register(
+    "list_watched_directories",
+    "List the directories currently being watched for file changes.",
+)
+def _list_watched_directories() -> str:
+    from app.core import native_bridge
+    watches = native_bridge.list_watches()
+    if watches is None:
+        return _WATCHER_DOWN
+    return "\n".join(watches) if watches else "No directories are being watched."
+
+
+@_register(
+    "get_file_events",
+    "File changes seen in watched directories since the last check. Reading "
+    "consumes the events. Each line: ts=<epoch> action=<created|modified|"
+    "deleted|moved_in|moved_out> path=<file>.",
+)
+def _get_file_events() -> str:
+    from app.core import native_bridge
+    events = native_bridge.get_file_events()
+    if events is None:
+        return _WATCHER_DOWN
+    return "\n".join(events) if events else "No file events since the last check."
+
+
 # ── public API ────────────────────────────────────────────
 
 def specs() -> List[ToolSpec]:
