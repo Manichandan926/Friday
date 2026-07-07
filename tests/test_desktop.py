@@ -168,7 +168,8 @@ class TestScreenshot:
         out = desktop.take_screenshot()
         assert "gnome-screenshot" in out and "dnf install" in out
 
-    def test_captures_to_home_pictures(self, monkeypatch, tmp_path):
+    def test_captures_via_gnome_screenshot_when_no_portal(self, monkeypatch, tmp_path):
+        # gdbus absent → falls back to gnome-screenshot (the X11/legacy path).
         _installed(monkeypatch, "gnome-screenshot")
         monkeypatch.setattr(desktop.Path, "home", classmethod(lambda cls: tmp_path))
         calls = []
@@ -184,6 +185,61 @@ class TestScreenshot:
         assert calls[-1][0] == "gnome-screenshot" and calls[-1][1] == "-f"
         saved = tmp_path / "Pictures" / "Screenshots"
         assert list(saved.glob("friday-*.png"))
+
+    def test_prefers_portal_when_gdbus_present(self, monkeypatch, tmp_path):
+        # gdbus present → portal path is chosen even if gnome-screenshot exists.
+        _installed(monkeypatch, "gdbus", "gnome-screenshot")
+        monkeypatch.setattr(desktop.Path, "home", classmethod(lambda cls: tmp_path))
+
+        def fake_portal(dest, wait):
+            Path(dest).write_bytes(b"PNG")
+            return True, str(dest)
+
+        monkeypatch.setattr(desktop, "_screenshot_via_portal", fake_portal)
+        out = desktop.take_screenshot(wait=1)
+        assert "Screenshot saved to" in out and "permission" in out
+        assert list((tmp_path / "Pictures" / "Screenshots").glob("friday-*.png"))
+
+    def test_portal_failure_is_reported_not_swallowed(self, monkeypatch, tmp_path):
+        # A portal decline/timeout must NOT fall through to the broken X11 grab.
+        _installed(monkeypatch, "gdbus", "gnome-screenshot")
+        monkeypatch.setattr(desktop.Path, "home", classmethod(lambda cls: tmp_path))
+        monkeypatch.setattr(
+            desktop, "_screenshot_via_portal",
+            lambda dest, wait: (False, "the screenshot permission was declined"),
+        )
+        out = desktop.take_screenshot(wait=1)
+        assert "Couldn't capture" in out and "declined" in out
+
+
+class TestPortalResponseParsing:
+    TOKEN = "friday1234"
+
+    def test_success_extracts_uri(self):
+        line = ("/org/freedesktop/portal/desktop/request/1_166/friday1234: "
+                "org.freedesktop.portal.Request.Response (uint32 0, "
+                "{'uri': <'file:///home/u/Pictures/Screenshots/Screenshot.png'>})")
+        assert desktop._parse_portal_response(line, self.TOKEN) == (
+            "ok", "file:///home/u/Pictures/Screenshots/Screenshot.png")
+
+    def test_declined_code_reports_declined(self):
+        line = ("/org/freedesktop/portal/desktop/request/1_166/friday1234: "
+                "org.freedesktop.portal.Request.Response (uint32 1, {})")
+        assert desktop._parse_portal_response(line, self.TOKEN) == ("declined", None)
+
+    def test_success_code_but_no_uri_is_declined(self):
+        line = ("/…/request/1_166/friday1234: "
+                "org.freedesktop.portal.Request.Response (uint32 0, {})")
+        assert desktop._parse_portal_response(line, self.TOKEN) == ("declined", None)
+
+    def test_unrelated_line_ignored(self):
+        assert desktop._parse_portal_response("random dbus noise", self.TOKEN) == (None, None)
+
+    def test_other_apps_request_ignored(self):
+        line = ("/org/freedesktop/portal/desktop/request/1_9/othertok: "
+                "org.freedesktop.portal.Request.Response (uint32 0, "
+                "{'uri': <'file:///x.png'>})")
+        assert desktop._parse_portal_response(line, self.TOKEN) == (None, None)
 
 
 class TestOpenApp:

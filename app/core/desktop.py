@@ -20,8 +20,13 @@ Every function returns a plain string for the model to read.
 import ast
 import datetime
 import operator as _op
+import re
+import secrets
+import select
 import shutil
 import subprocess
+import time
+import urllib.parse
 from pathlib import Path
 
 from app.core.logger import logger
@@ -320,23 +325,107 @@ def play_media(target: str) -> str:
 
 # ── screenshot ─────────────────────────────────────────────────────────────
 
-def take_screenshot() -> str:
+def _parse_portal_response(line: str, token: str):
+    """Classify one `gdbus monitor` line for our screenshot request.
+
+    The portal answers asynchronously with a Request.Response signal whose
+    object path ends in our handle token:
+      /…/request/1_166/<token>: …Request.Response (uint32 0, {'uri': <'file://…'>})
+    Response code 0 = success (carries a uri), anything else = declined.
+
+    Returns ('ok', uri) | ('declined', None) | (None, None) — the last means
+    "not our line, keep reading".
+    """
+    if token not in line or "Request.Response" not in line:
+        return None, None
+    m = re.search(r"Request\.Response \((?:uint32 )?(\d+)", line)
+    code = int(m.group(1)) if m else 1
+    if code != 0:
+        return "declined", None
+    uri = re.search(r"'uri':\s*<'([^']+)'>", line)
+    if uri:
+        return "ok", uri.group(1)
+    return "declined", None  # success code but no uri — treat as failure
+
+
+def _screenshot_via_portal(dest: Path, wait: int) -> tuple:
+    """Capture the whole screen through the XDG desktop portal — the only
+    method GNOME/Wayland actually permits (the Shell's own D-Bus screenshot
+    interface refuses non-Shell callers, and gnome-screenshot then falls back
+    to a broken X11 grab that yields a blank image). GNOME shows a one-click
+    consent dialog; the result arrives async as a Response signal we read off
+    a `gdbus monitor`. Returns (ok, message).
+
+    ponytail: driving the portal's async Request/Response over the gdbus CLI
+    (rather than a real D-Bus binding) is deliberately lean — no new dep. The
+    ceiling: it depends on gdbus-monitor's line format and needs the user to
+    approve the dialog within `wait` seconds. Upgrade path: a proper D-Bus
+    client (jeepney/pygobject) if we ever bundle one.
+    """
+    mon = subprocess.Popen(
+        ["gdbus", "monitor", "--session", "--dest", "org.freedesktop.portal.Desktop"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+    )
+    try:
+        token = "friday" + secrets.token_hex(4)
+        fired = _run(
+            ["gdbus", "call", "--session", "--dest", "org.freedesktop.portal.Desktop",
+             "--object-path", "/org/freedesktop/portal/desktop",
+             "--method", "org.freedesktop.portal.Screenshot.Screenshot",
+             "", "{'interactive': <false>, 'handle_token': <'%s'>}" % token],
+        )
+        if not fired[0]:
+            return False, f"portal request failed: {fired[1]}"
+        deadline = time.monotonic() + wait
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False, ("timed out waiting for the screenshot — was GNOME's "
+                               "permission dialog missed or dismissed?")
+            if not select.select([mon.stdout], [], [], remaining)[0]:
+                continue
+            line = mon.stdout.readline()
+            if not line:
+                return False, "the screenshot monitor closed unexpectedly"
+            state, uri = _parse_portal_response(line, token)
+            if state == "declined":
+                return False, "the screenshot permission was declined"
+            if state == "ok":
+                src = Path(urllib.parse.unquote(urllib.parse.urlparse(uri).path))
+                if not src.exists():
+                    return False, "the portal reported success but produced no file"
+                shutil.move(str(src), str(dest))  # rename into our friday-<stamp>.png
+                return True, str(dest)
+    finally:
+        mon.terminate()
+
+
+def take_screenshot(wait: int = 30) -> str:
     """Capture the full screen to a fresh timestamped PNG under ~/Pictures/
-    Screenshots. Never overwrites anything, so it's additive/reversible."""
-    if not _which("gnome-screenshot"):
-        # GNOME's Wayland session blocks silent captures over gdbus/portal
-        # unless a real screenshot tool is present; name the one-line fix.
-        return ("Can't take a screenshot: gnome-screenshot isn't installed "
-                "(GNOME/Wayland blocks silent captures otherwise). Install it: "
-                "sudo dnf install gnome-screenshot")
+    Screenshots. Never overwrites anything, so it's additive/reversible.
+
+    On GNOME/Wayland this goes through the XDG portal (GNOME will ask you to
+    approve it once per shot); elsewhere it falls back to gnome-screenshot."""
     dest_dir = Path.home() / "Pictures" / "Screenshots"
     dest_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     dest = dest_dir / f"friday-{stamp}.png"
-    ok, out = _run(["gnome-screenshot", "-f", str(dest)], timeout=15)
-    if ok and dest.exists():
-        return f"Screenshot saved to {dest}."
-    return f"Screenshot failed: {out or 'no file was produced'}"
+    # Preferred path: the desktop portal. It's the only capture GNOME/Wayland
+    # permits, so if it's present we use it and report honestly on failure —
+    # we do NOT fall through to gnome-screenshot's broken X11 fallback.
+    if _which("gdbus"):
+        ok, res = _screenshot_via_portal(dest, wait)
+        if ok:
+            return f"Screenshot saved to {res} (GNOME asked permission first)."
+        return f"Couldn't capture the screen: {res}"
+    # No portal (older or X11 desktops): gnome-screenshot works fine there.
+    if _which("gnome-screenshot"):
+        ok, out = _run(["gnome-screenshot", "-f", str(dest)], timeout=15)
+        if ok and dest.exists():
+            return f"Screenshot saved to {dest}."
+        return f"Screenshot failed: {out or 'no file was produced'}"
+    return ("Can't take a screenshot: no desktop portal and gnome-screenshot "
+            "isn't installed. Install it: sudo dnf install gnome-screenshot")
 
 
 # ── calculator (pure Python, no shell) ─────────────────────────────────────
