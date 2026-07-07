@@ -97,57 +97,119 @@ class PendingApproval:
     calls: List[ToolCall]
 
 SYSTEM_PROMPT = """\
-You are FRIDAY — a personal AI assistant your person built themselves, running \
-on their Linux laptop (Fedora KDE): a Python orchestrator with a native C \
-system monitor, thinking through a cloud LLM.
+You are FRIDAY, a personal AI assistant your person built, running on their \
+Linux laptop (Fedora, GNOME/Wayland). You act through tools: system stats; \
+their tasks, emails, applications and notes; shell diagnostics; and desktop \
+control (media, volume, brightness, notifications, clipboard, open apps/files, \
+play media, reminders, math). Asked to do one of these? Just call the tool — \
+don't narrate the steps.
 
-Who you are:
-- Less corporate tool, more sharp and dependable friend — the kind who \
-actually listens, remembers things, and calls it straight. Warm, direct, a \
-little playful when it fits. No filler, no flattery, no lecture mode.
-- You care about their goals — placements, projects, study — the way a \
+Voice: a sharp, dependable friend — warm, direct, a little playful; no filler \
+or flattery. You care about their placements, projects and study like a \
 brother would: celebrate wins, flag slipping deadlines honestly, never nag.
 
-Ground rules (non-negotiable):
-1. Never invent data. Anything about this machine, its files or processes, \
-the user's tasks, emails, applications, or the current date/time must come \
-from a tool result in this conversation. Don't have it? Call a tool or say \
-you don't have it.
-2. Check, don't guess — when facts are needed, use your tools. Read tool \
-output carefully; if a tool fails or returns nothing useful, say so plainly.
-3. Actions are tiered, and the system enforces this — not you. Low-risk \
-actions (reading anything, creating tasks, saving notes and memories) are \
-yours to take freely; they're always logged. Medium-risk actions (writing \
-files, creating folders, shell commands that change anything) go through an \
-automatic approval step: when the user wants one done, just call the tool — \
-the system pauses and asks them for a yes itself, so don't ask permission in \
-prose first, and never retry an action the user declined. High-risk actions \
-(deleting files, credentials, money, anything hard to undo) are never \
-executed — explain what you'd recommend and how they can do it themselves.
+Rules (the system enforces #3, not you):
+1. Never invent facts. Anything about this machine, their data, or the current \
+date/time must come from a tool result in this conversation — else call a tool \
+or say you don't have it.
+2. Read tool output carefully; if a tool fails or returns nothing, say so.
+3. Actions are tiered. Low-risk (reads, notes/memories, media/volume/\
+brightness, notifications, clipboard, reminders) you do freely. Medium-risk \
+(writing files, making folders, opening apps/files, playing media, \
+state-changing shell) — just call the tool; the system pauses and asks the \
+user for a yes itself, so don't ask in prose first, and never retry something \
+they declined. High-risk (deleting, credentials, anything hard to undo) is \
+never executed — say what you'd recommend instead.
 4. General knowledge (code, concepts, advice) needs no tools — just answer.
-5. This is a chat with a friend, not a report. Keep it conversational and \
-tight; skip headers and bullet walls unless they genuinely help.
+5. Keep it conversational and tight; skip headers and bullet walls unless they \
+genuinely help.
 """
 
-HELP_TEXT = (
-    "### FRIDAY Commands\n\n"
-    "Just talk to me normally — I can check the system, your tasks, emails, "
-    "deadlines, and more on my own. Slash commands are free shortcuts that "
-    "skip the LLM:\n\n"
-    "| Command | Description |\n"
-    "| --- | --- |\n"
-    "| `/brief` | Daily briefing with tasks, emails, and focus |\n"
-    "| `/plan request` | Generate a task plan |\n"
-    "| `/run command` | Run a safe shell command directly |\n"
-    "| `/learn cat \\| title \\| content` | Add to knowledge vault |\n"
-    "| `/search query` | Search knowledge vault |\n"
-    "| `/addproject name \\| desc \\| progress` | Track a project |\n"
-    "| `/scan` | Scan the web for internship listings |\n"
-    "| `/notifications` | View proactive alerts |\n"
-    "| `/provider name` | Switch LLM provider (groq, openai, gemini, claude) |\n"
-    "| `/cost` | Session token usage and cost per model |\n"
-    "| `/help` | Show this help |\n"
-)
+# A purely social message (greeting, thanks, acknowledgment) never needs a
+# tool, so we skip shipping the ~2.9k-token tool catalogue for it. Conservative
+# by design: tools are dropped ONLY when every word is social — any real word
+# (a request, a noun, a question) keeps the full toolset, so capability is
+# never lost, only wasted tokens.
+_SOCIAL_WORDS = {
+    "hi", "hii", "hey", "helo", "hello", "hlo", "yo", "sup", "hola", "namaste",
+    "good", "morning", "afternoon", "evening", "night", "gm", "gn", "morn",
+    "goodnight", "goodmorning", "gnite", "nite",
+    "thanks", "thank", "thankyou", "thx", "ty", "cheers", "welcome",
+    "ok", "okay", "k", "kk", "cool", "nice", "great", "awesome", "sweet",
+    "lol", "haha", "hehe", "hmm", "ah", "oh", "yay",
+    "friday", "bro", "man", "buddy", "dude", "mate", "pal",
+    "please", "pls", "yeah", "yep", "yup", "ya", "sure",
+    "bye", "goodbye", "cya", "gg", "np", "cool", "there",
+}
+
+
+def looks_social_only(message: str) -> bool:
+    """True if the message is nothing but greeting/acknowledgment words."""
+    words = re.findall(r"[a-z']+", message.lower())
+    return bool(words) and all(w in _SOCIAL_WORDS for w in words)
+
+
+# Cap on a single tool result kept in the in-loop message history. The model
+# sees enough to answer, but a huge dump (a long shell output, a big list)
+# doesn't re-ride verbatim through every subsequent tool round.
+MAX_TOOL_RESULT_CHARS = 1200
+
+
+def _cap_tool_result(text: str) -> str:
+    if text and len(text) > MAX_TOOL_RESULT_CHARS:
+        return text[:MAX_TOOL_RESULT_CHARS] + "\n[… truncated]"
+    return text
+
+HELP_TEXT = r"""## 🤖 FRIDAY — what I can do
+
+**Just talk to me in plain English.** You don't need to memorize anything
+below — it's a map, not a syntax you have to learn.
+
+### 💬 Ask me anything
+Questions, coding, advice, explanations — I just answer. I also know your
+tasks, emails, deadlines, applications, notes, and this laptop's live status,
+so things like *"what's due this week?"* or *"how much RAM am I using?"* work.
+
+### 🖥️ Control your laptop — just ask (these happen instantly)
+- **Media & sound** — *"pause the music"*, *"next song"*, *"set volume to 40"*, *"mute"*
+- **Screen** — *"dim to 30%"*, *"how bright is it?"*, *"take a screenshot"*
+- **Reminders** — *"remind me in 20 minutes to stretch"*
+- **Notifications** — *"notify me the download is done"*
+- **Clipboard** — *"what's in my clipboard?"*, *"copy my email to the clipboard"*
+- **Quick math** — *"what's 1200 * 0.18 + 50?"*
+
+### ✅ Actions I confirm first (I'll ask before doing them)
+- **Open an app** — *"open Firefox"*, *"open the files app"*
+- **Open a file or link** — *"open my Downloads"*, *"open github.com"*
+- **Play media** — *"play ~/Music/song.mp3"*
+- **Write a file, make a folder, or change something with a shell command**
+
+You'll see a **⏸ Approval needed** box — reply **yes** (or *"yeah"*, *"ok"*,
+*"go ahead"*) to run it, anything else to skip.
+
+### ⛔ Things I never do
+Delete files, run `sudo`, or anything hard to undo. I'll tell you how to do it
+yourself instead. This limit is enforced in code, not just my judgment.
+
+---
+
+### ⌨️ Slash commands — instant shortcuts that skip the AI (free)
+
+| Command | What it does |
+| --- | --- |
+| `/help` | Show this help |
+| `/brief` | Your daily briefing — tasks, emails, focus |
+| `/plan goal` | Turn a goal into a task plan — e.g. `/plan finish my resume` |
+| `/run command` | Run a safe, read-only shell command — e.g. `/run df -h` |
+| `/search query` | Search your saved notes — e.g. `/search s3 policy` |
+| `/learn cat \| title \| content` | Save a note — e.g. `/learn aws \| S3 \| policies are JSON` |
+| `/addproject name \| desc \| progress` | Track a project |
+| `/scan` | Scan the web for internship listings |
+| `/notifications` | Show proactive alerts |
+| `/provider name` | Switch AI brain — groq, openai, gemini, claude |
+| `/cost` | Token usage & cost (this session + all-time) |
+| `exit` | Quit FRIDAY |
+"""
 
 
 class FridayAssistant:
@@ -190,7 +252,10 @@ class FridayAssistant:
             reply = await self._resolve_pending(conversation_id, pending, user_message, cleaned_msg)
         else:
             messages = self._build_prompt_context(conversation_id)
-            reply = await self._run_tool_loop(conversation_id, messages)
+            # Skip the tool catalogue entirely for pure greetings/acks — big
+            # TPD saving on the cheapest turns, no capability lost.
+            tools_enabled = not looks_social_only(user_message)
+            reply = await self._run_tool_loop(conversation_id, messages, tools_enabled)
 
         MemoryManager.add_message(conversation_id, "assistant", reply)
 
@@ -233,7 +298,7 @@ class FridayAssistant:
                 "role": "tool",
                 "tool_call_id": call.id,
                 "name": call.name,
-                "content": result,
+                "content": _cap_tool_result(result),
             })
 
         # A clear new request (not a bare decline) rides along so the model
@@ -253,8 +318,9 @@ class FridayAssistant:
 
     # ── agentic tool loop ─────────────────────────────────
 
-    async def _run_tool_loop(self, conversation_id: int, messages: List[Dict[str, Any]]) -> str:
-        tools = toolkit.specs()
+    async def _run_tool_loop(self, conversation_id: int, messages: List[Dict[str, Any]],
+                             tools_enabled: bool = True) -> str:
+        tools = toolkit.specs() if tools_enabled else None
 
         try:
             reply = await self.provider.chat(messages, tools=tools)
@@ -293,7 +359,7 @@ class FridayAssistant:
                     "role": "tool",
                     "tool_call_id": call.id,
                     "name": call.name,
-                    "content": result,
+                    "content": _cap_tool_result(result),
                 })
 
             if needs_approval:
@@ -335,7 +401,9 @@ class FridayAssistant:
         recent = history[-context.RECENT_WINDOW:]
 
         query = next((m.content for m in reversed(recent) if m.role == "user"), "")
-        memories = context.select_memories(MemoryManager.get_memory_items(), query)
+        memories = context.select_memories(
+            MemoryManager.get_memory_items(limit=context.MEMORY_CANDIDATE_CAP), query
+        )
 
         return context.build_messages(SYSTEM_PROMPT, summary, memories, recent)
 

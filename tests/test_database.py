@@ -85,6 +85,31 @@ def test_add_and_get_memory_items():
     remaining = MemoryManager.get_memory_items(category="user_preferences")
     assert not any(m.id == item.id for m in remaining)
 
+def test_get_memory_items_respects_limit():
+    # Scale guard: the recall/dedup hot paths pass a limit so per-turn cost
+    # stays flat as the store grows. The limit must bound the result and
+    # return newest-first.
+    conv_cat = "limit_probe"
+    for i in range(25):
+        MemoryManager.add_memory_item(conv_cat, f"fact number {i}")
+    capped = MemoryManager.get_memory_items(category=conv_cat, limit=5)
+    assert len(capped) == 5
+    # newest-first: the last-inserted fact is present, an early one is not
+    contents = [m.content for m in capped]
+    assert "fact number 24" in contents
+    assert "fact number 0" not in contents
+
+
+def test_get_recent_messages_is_bounded_tail_in_order():
+    # memory_agent needs only the last few messages; this must fetch a bounded
+    # tail (not the whole conversation) and return it chronologically.
+    conv = MemoryManager.create_conversation("tail probe")
+    for i in range(20):
+        MemoryManager.add_message(conv.id, "user", f"m{i}")
+    tail = MemoryManager.get_recent_messages(conv.id, 4)
+    assert [m.content for m in tail] == ["m16", "m17", "m18", "m19"]
+
+
 def test_add_and_get_knowledge():
     # 1. Add knowledge item
     k = MemoryManager.add_knowledge_item(

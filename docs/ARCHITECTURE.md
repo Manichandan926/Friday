@@ -87,7 +87,12 @@ spec handed to the LLM. `execute()` is the gate — it classifies, checks
 approval, filters arguments to the schema, runs the handler, and audit-logs
 the decision (`AUDIT tier=N tool=… decision=…`). `tools.py` holds the actual
 readers (system info, DB summaries), each of which prefers the native daemon
-and falls back to pure Python.
+and falls back to pure Python. `desktop.py` holds the desktop-control layer
+(media/volume/brightness, notifications, clipboard, screenshots, opening apps
+and files, playing media, a safe calculator) — thin `subprocess` wrappers
+over small Linux CLIs, always argv lists with `shell=False` (no injection
+surface), each degrading with an install hint when its backing tool is
+absent.
 
 ### Provider abstraction — `app/llm/`
 - `types.py` — the neutral contract: `ToolSpec`, `ToolCall`, `LLMReply`,

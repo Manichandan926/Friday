@@ -41,6 +41,23 @@ class MemoryManager:
             return list(session.scalars(stmt).all())
 
     @staticmethod
+    def get_recent_messages(conversation_id: int, limit: int) -> List[Message]:
+        """The last `limit` messages of a conversation, in chronological order.
+
+        Bounded by SQL (ORDER BY id DESC LIMIT n) so callers that only need the
+        tail don't load the whole conversation into RAM — at scale that is the
+        difference between reading 4 rows and reading a million.
+        """
+        with get_db_session() as session:
+            stmt = (
+                select(Message)
+                .where(Message.conversation_id == conversation_id)
+                .order_by(Message.id.desc())
+                .limit(limit)
+            )
+            return list(reversed(session.scalars(stmt).all()))
+
+    @staticmethod
     def get_messages_after(conversation_id: int, after_id: int) -> List[Message]:
         """Messages not yet covered by the rolling summary (id > after_id)."""
         with get_db_session() as session:
@@ -72,12 +89,18 @@ class MemoryManager:
             return item
 
     @staticmethod
-    def get_memory_items(category: Optional[str] = None) -> List[MemoryItem]:
+    def get_memory_items(category: Optional[str] = None,
+                         limit: Optional[int] = None) -> List[MemoryItem]:
+        """Long-term facts, newest first. `limit` bounds the candidate set for
+        hot-path callers (recall, dedup) so per-turn cost stays flat as the
+        store grows — without a limit this scans every fact ever saved."""
         with get_db_session() as session:
             stmt = select(MemoryItem)
             if category:
                 stmt = stmt.where(MemoryItem.category == category)
             stmt = stmt.order_by(MemoryItem.created_at.desc())
+            if limit is not None:
+                stmt = stmt.limit(limit)
             return list(session.scalars(stmt).all())
 
     @staticmethod

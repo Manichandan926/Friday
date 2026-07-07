@@ -20,6 +20,14 @@ RECENT_WINDOW = 12
 SUMMARY_TRIGGER = 24
 # Max memory items injected per prompt.
 MEMORY_LIMIT = 10
+# Candidate facts pulled (newest-first) for relevance scoring each turn. The
+# scorer is O(candidates), so this caps per-turn recall cost no matter how big
+# the store grows — scoring the 500 most-recent facts is ~6ms; scoring all
+# 200k+ is ~1.5s. ponytail: recency-capped recall means a highly-relevant but
+# very old fact (beyond the newest 500) won't surface. Upgrade path when that
+# bites: a keyword index (SQLite FTS5) or embeddings to fetch candidates by
+# relevance in SQL instead of by recency.
+MEMORY_CANDIDATE_CAP = 500
 # A message longer than this is truncated inside the summarization transcript.
 SUMMARY_SNIPPET_CHARS = 600
 

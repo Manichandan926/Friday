@@ -29,6 +29,10 @@ Respond with raw JSON only:
 If nothing new, return: {"new_memories": []}
 No markdown wrapping. Raw JSON only."""
 
+# How many recent facts to dedup against (and feed the extraction prompt).
+# Bounds both the DB scan and the prompt token cost per turn.
+_DEDUP_LOOKBACK = 100
+
 class MemoryAgent:
     def __init__(self):
         try:
@@ -42,20 +46,24 @@ class MemoryAgent:
         if not self.provider:
             return 0
 
-        messages = MemoryManager.get_messages(conversation_id)
-        if len(messages) < 2:
+        # Only the last exchange matters — fetch the tail in SQL, not the whole
+        # conversation (which at scale is hundreds of thousands of rows loaded
+        # every turn just to slice off 4).
+        recent = MemoryManager.get_recent_messages(conversation_id, 4)
+        if len(recent) < 2:
             return 0
 
-        # only look at last 4 messages, but only feed USER messages for extraction
-        recent = messages[-4:]
         exchange_lines = []
         for msg in recent:
             # label clearly so the LLM knows which is user vs assistant
             exchange_lines.append(f"{msg.role.upper()}: {msg.content}")
         exchange_text = "\n".join(exchange_lines)
 
-        # pass existing memories to avoid duplication
-        existing_mems = MemoryManager.get_memory_items()
+        # pass existing memories to avoid duplication — bounded to the most
+        # recent so both this scan and the extraction prompt stay flat as the
+        # store grows. ponytail: a duplicate older than the lookback could be
+        # re-added; acceptable (bounded dup) vs. loading every fact each turn.
+        existing_mems = MemoryManager.get_memory_items(limit=_DEDUP_LOOKBACK)
         existing_text = "\n".join([f"- [{m.category}] {m.content}" for m in existing_mems])
 
         prompt = f"Existing Memories:\n{existing_text}\n\nRecent Exchange:\n{exchange_text}"
