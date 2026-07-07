@@ -38,4 +38,6 @@ jobs:
         # (native_bridge, fast_ops) cover the suite by design.
         env:
           DATABASE_URL: sqlite:///${{ runner.temp }}/friday-test.db
-        run: pytest tests -q
+        # `python -m pytest` (not the bare console script) puts the repo root on
+        # sys.path so `import app` and tests/conftest.py resolve.
+        run: python -m pytest tests -q
