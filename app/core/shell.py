@@ -88,6 +88,22 @@ def has_command_substitution(command: str) -> bool:
     return any(tok in command for tok in _SUBSTITUTION_TOKENS)
 
 
+# Control operators that CHAIN a second command onto a whitelisted first one.
+# Because commands run under shell=True, `ls && curl evil` runs `curl` even
+# though only `ls` is whitelisted: the checks below validate the first token
+# (and pipe segments) but never see what follows `;`, `&`, `&&`, or a newline.
+# Pipes ('|') are deliberately NOT here — they're validated per-segment below.
+# Everything else that separates commands is refused outright, the same
+# fail-closed stance as command substitution. (`&&` and `&` are both caught by
+# the bare `&`; `;;` by `;`.)
+_CHAINING_TOKENS = (";", "&", "\n", "\r")
+
+
+def has_command_chaining(command: str) -> bool:
+    """True if the command chains another command via ; & or a newline."""
+    return any(tok in command for tok in _CHAINING_TOKENS)
+
+
 def is_command_safe(command: str) -> Tuple[bool, str]:
     """
     Validate if a shell command is safe to execute.
@@ -104,6 +120,13 @@ def is_command_safe(command: str) -> Tuple[bool, str]:
     # parsing-integrity guarantee, not a heuristic: it must not be bypassable.
     if has_command_substitution(command):
         return False, "Blocked: command substitution/expansion is not allowed."
+
+    # Refuse command chaining for the same reason and just as early: `ls &&
+    # curl evil` would otherwise pass because only the first token is checked,
+    # then run the whole chain under shell=True. Before the native validator
+    # too, so nothing looser can wave it through.
+    if has_command_chaining(command):
+        return False, "Blocked: chaining commands with ; & or newlines is not allowed."
 
     # try native C validator first (binary search + strstr, no regex)
     try:

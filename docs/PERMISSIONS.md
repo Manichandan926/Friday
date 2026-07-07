@@ -116,6 +116,24 @@ real terminal session, not only the test suite):
   real session, "hmm, not sure" re-asked and held the pending write, then
   "yeah go for it" approved and wrote it.
 
+**Closed and live-verified 2026-07-07:**
+
+- ~~**Command chaining bypasses the whitelist (arbitrary AUTO-tier execution).**~~
+  Fixed. The validator checked only the first token (and pipe segments), but
+  commands run under `shell=True`, so `ls && curl evil` classified by `ls`
+  (→ AUTO) and then ran the whole chain with no approval — the single most
+  dangerous prompt-injection path, since injected text could get the model to
+  call `run_shell` with a chained payload that never paused for a yes.
+  `has_command_chaining()` in `shell.py` now refuses any command containing
+  `;`, `&` (covers `&&` and background), or a newline/carriage-return —
+  checked first in `is_command_safe()` (before the native validator) and again
+  as NEVER in `classify_command()`. Pipes (`|`) stay allowed and are still
+  validated per segment. Adversarial tests in `test_tiers.py`
+  (`test_command_chaining_is_never`, `test_chaining_blocked_at_the_executor_
+  too`, `test_chaining_refused_at_the_toolkit_gate`). Live check: `echo safe &&
+  touch /tmp/friday_pwned` was refused at `execute_command` and created no
+  file.
+
 **Also closed 2026-07-06:**
 
 - ~~**`watch_directory` has no path scope.**~~ Fixed. It's now fenced to
