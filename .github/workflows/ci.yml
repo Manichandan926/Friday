@@ -32,12 +32,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
 
+      - name: Build native command validator
+        # fast_ops loads native/command_validator.so; a couple of shell tests
+        # exercise the C validator's whitelist directly, so build it to match
+        # the real runtime (gcc/make are preinstalled on the runner).
+        run: make -C native libs
+
       - name: Run test suite
         # Throwaway, isolated SQLite DB per run (config.py creates the dir).
-        # Native C/Rust helpers aren't built in CI; the pure-Python fallbacks
-        # (native_bridge, fast_ops) cover the suite by design.
         env:
           DATABASE_URL: sqlite:///${{ runner.temp }}/friday-test.db
         # `python -m pytest` (not the bare console script) puts the repo root on
-        # sys.path so `import app` and tests/conftest.py resolve.
-        run: python -m pytest tests -q
+        # sys.path so `import app` and tests/conftest.py resolve. Benchmarks are
+        # excluded — timing assertions are too runner-noisy to gate on.
+        run: python -m pytest tests -q --ignore=tests/benchmarks
