@@ -16,9 +16,6 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    env:
-      # Throwaway, isolated SQLite DB per run (config.py creates the dir).
-      DATABASE_URL: sqlite:///${{ runner.temp }}/friday-test.db
     steps:
       - uses: actions/checkout@v4
 
@@ -36,6 +33,9 @@ jobs:
           pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Run test suite
+        # Throwaway, isolated SQLite DB per run (config.py creates the dir).
         # Native C/Rust helpers aren't built in CI; the pure-Python fallbacks
         # (native_bridge, fast_ops) cover the suite by design.
+        env:
+          DATABASE_URL: sqlite:///${{ runner.temp }}/friday-test.db
         run: pytest tests -q
