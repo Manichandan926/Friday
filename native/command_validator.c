@@ -17,7 +17,12 @@
 #include <string.h>
 #include <ctype.h>
 
-/* sorted whitelist for binary search */
+/* sorted whitelist for binary search.
+ *
+ * INVARIANT: must stay identical (as a set) to SAFE_COMMANDS in
+ * app/core/shell.py — this C validator is the production fast path, that set
+ * is the pure-Python fallback. Keep this array SORTED (binary search relies on
+ * it). A guardrail test asserts the two lists match, so drift fails CI. */
 static const char *WHITELIST[] = {
     "acpi",       "awk",        "cal",        "cargo",      "cat",
     "cut",        "date",       "df",         "dig",        "dmidecode",
