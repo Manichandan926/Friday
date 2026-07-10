@@ -160,6 +160,39 @@ def _cap_tool_result(text: str) -> str:
         return text[:MAX_TOOL_RESULT_CHARS] + "\n[… truncated]"
     return text
 
+
+# "Speak first": the background scheduler queues notifications (due tasks,
+# deadlines, RAM/disk/battery, priority emails) into the notifications table.
+# On a fresh turn we weave any *unread* ones into the context so FRIDAY opens
+# by mentioning them — the JARVIS "heads up…" moment — then mark exactly those
+# read so they surface once, not re-billed every turn. Zero tokens when the
+# queue is empty (the common path), so this never taxes the TPD budget idly.
+MAX_SESSION_NUDGES = 5
+
+
+def pending_nudges_message(conversation_id: int) -> Optional[Dict[str, Any]]:
+    """Return a system-role briefing of unread notifications (and mark them
+    read), or None if there's nothing to surface."""
+    try:
+        notifs = MemoryManager.get_notifications(unread_only=True, limit=MAX_SESSION_NUDGES)
+    except Exception as e:  # a briefing must never break the actual reply
+        logger.error(f"pending_nudges_message: {e}")
+        return None
+    if not notifs:
+        return None
+
+    lines = [f"• [{n.category}] {n.title}: {n.message}" for n in notifs]
+    MemoryManager.mark_notifications_read([n.id for n in notifs])
+    return {
+        "role": "system",
+        "content": (
+            "Proactive briefing from your background monitors. Open your reply "
+            "by surfacing what matters here, briefly and in your own voice — "
+            "don't dump it verbatim or narrate what doesn't matter:\n"
+            + "\n".join(lines)
+        ),
+    }
+
 HELP_TEXT = r"""## 🤖 FRIDAY — what I can do
 
 **Just talk to me in plain English.** You don't need to memorize anything
@@ -252,6 +285,11 @@ class FridayAssistant:
             reply = await self._resolve_pending(conversation_id, pending, user_message, cleaned_msg)
         else:
             messages = self._build_prompt_context(conversation_id)
+            # "Speak first": fold any queued proactive notifications into this
+            # turn so FRIDAY opens by mentioning them (even on a bare "hi").
+            nudge = pending_nudges_message(conversation_id)
+            if nudge:
+                messages.append(nudge)
             # Skip the tool catalogue entirely for pure greetings/acks — big
             # TPD saving on the cheapest turns, no capability lost.
             tools_enabled = not looks_social_only(user_message)

@@ -366,14 +366,57 @@ class MemoryManager:
                 })
             return totals
 
+    # --- Analytics aggregates (computed in SQL, not by loading rows) ---
+
+    @staticmethod
+    def count_tasks(status: Optional[str] = None,
+                    created_after: Optional[datetime] = None,
+                    created_before: Optional[datetime] = None,
+                    due_before: Optional[datetime] = None) -> int:
+        """Bounded COUNT over tasks. `due_before` implies a real due_date
+        (NULLs excluded), so status='pending' + due_before=now = overdue."""
+        with get_db_session() as session:
+            stmt = select(func.count(Task.id))
+            if status is not None:
+                stmt = stmt.where(Task.status == status)
+            if created_after is not None:
+                stmt = stmt.where(Task.created_at >= created_after)
+            if created_before is not None:
+                stmt = stmt.where(Task.created_at < created_before)
+            if due_before is not None:
+                stmt = stmt.where(Task.due_date.is_not(None), Task.due_date < due_before)
+            return int(session.scalar(stmt) or 0)
+
+    @staticmethod
+    def sum_usage_tokens(created_after: Optional[datetime] = None,
+                         provider: Optional[str] = None) -> tuple:
+        """(input_tokens, output_tokens, calls) summed in SQL. `provider` is
+        matched case-insensitively (records store 'Groq', 'OpenAI', …)."""
+        with get_db_session() as session:
+            stmt = select(
+                func.coalesce(func.sum(UsageRecord.input_tokens), 0),
+                func.coalesce(func.sum(UsageRecord.output_tokens), 0),
+                func.count(UsageRecord.id),
+            )
+            if created_after is not None:
+                stmt = stmt.where(UsageRecord.created_at >= created_after)
+            if provider is not None:
+                stmt = stmt.where(func.lower(UsageRecord.provider) == provider.lower())
+            tin, tout, calls = session.execute(stmt).one()
+            return int(tin), int(tout), int(calls)
+
     # --- Notifications ---
 
     @staticmethod
-    def mark_notifications_read() -> int:
+    def mark_notifications_read(ids: Optional[List[int]] = None) -> int:
+        """Mark notifications read. With `ids`, only those (so a nudge that
+        arrives mid-turn isn't marked read before it's ever surfaced);
+        without, all unread."""
         with get_db_session() as session:
-            unread = session.scalars(
-                select(Notification).where(Notification.is_read == False)
-            ).all()
+            stmt = select(Notification).where(Notification.is_read == False)
+            if ids is not None:
+                stmt = stmt.where(Notification.id.in_(ids))
+            unread = session.scalars(stmt).all()
             count = 0
             for n in unread:
                 n.is_read = True
