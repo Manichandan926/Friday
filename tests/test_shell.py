@@ -54,7 +54,44 @@ def test_empty_command_rejected():
     is_safe, reason = is_command_safe("")
     assert is_safe is False
     assert "Empty command" in reason
-    
+
     is_safe_spaces, reason_spaces = is_command_safe("   ")
     assert is_safe_spaces is False
     assert "Empty command" in reason_spaces
+
+
+def test_python_and_native_whitelists_match():
+    """Guardrail: the Python fallback whitelist (shell.SAFE_COMMANDS) and the
+    native C validator's WHITELIST[] must be the same set. If they drift,
+    FRIDAY's shell behaviour silently changes depending on whether the .so is
+    built — which is exactly the bug this test exists to prevent."""
+    import re
+    from pathlib import Path
+    from app.core.shell import SAFE_COMMANDS
+
+    c_src = (Path(__file__).resolve().parents[1] / "native" / "command_validator.c").read_text()
+    block = c_src.split("WHITELIST[] = {")[1].split("};")[0]
+    native = set(re.findall(r'"([^"]+)"', block))
+
+    missing_in_python = native - SAFE_COMMANDS
+    missing_in_native = SAFE_COMMANDS - native
+    assert not missing_in_python, f"in native C but not Python fallback: {sorted(missing_in_python)}"
+    assert not missing_in_native, f"in Python fallback but not native C: {sorted(missing_in_native)}"
+
+
+def test_native_whitelist_is_sorted():
+    """Binary search in the C validator requires the array stay sorted."""
+    import re
+    from pathlib import Path
+
+    c_src = (Path(__file__).resolve().parents[1] / "native" / "command_validator.c").read_text()
+    block = c_src.split("WHITELIST[] = {")[1].split("};")[0]
+    entries = re.findall(r'"([^"]+)"', block)
+    assert entries == sorted(entries), "native WHITELIST[] must be sorted for binary search"
+
+
+def test_grep_allowed_on_python_fallback():
+    """grep is what the run_shell tool tells the model to pipe through, so the
+    pure-Python path must allow it (this was the concrete drift bug)."""
+    is_safe, reason = is_command_safe("ps aux | grep python")
+    assert is_safe is True, reason

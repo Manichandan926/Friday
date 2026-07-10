@@ -12,6 +12,12 @@ from app.core.logger import logger
 TIMEOUT = 5
 
 # commands that are always safe to run (read-only system queries)
+#
+# INVARIANT: this set must stay byte-for-byte identical to the WHITELIST[] in
+# native/command_validator.c — the C validator is the production fast path and
+# this is the pure-Python fallback, so any divergence means FRIDAY's shell
+# behaviour changes depending on whether the .so is built. A guardrail test
+# (tests/test_shell.py::test_python_and_native_whitelists_match) fails on drift.
 SAFE_COMMANDS = {
     # system monitoring
     "ps", "top", "htop", "free", "df", "du", "uname", "uptime", "who", "whoami",
@@ -22,9 +28,11 @@ SAFE_COMMANDS = {
     "ip", "ifconfig", "nmcli", "ping", "nslookup", "dig", "traceroute",
     "ss", "netstat", "iwconfig", "iw",
     # files
-    "cat", "head", "tail", "less", "wc", "file", "stat", "ls", "find", "which",
+    "cat", "head", "tail", "wc", "file", "stat", "ls", "find", "which",
     "whereis", "type", "echo", "env", "printenv", "readlink", "realpath",
     "md5sum", "sha256sum", "strings", "touch", "mkdir", "pwd",
+    # text processing / pipe filters
+    "grep", "sed", "awk", "cut", "sort", "uniq", "tr", "xargs", "tee", "sleep",
     # development
     "python3", "python", "java", "javac", "gcc", "g++", "node", "npm", "cargo",
     "git", "pip", "pip3", "rustc", "go",
