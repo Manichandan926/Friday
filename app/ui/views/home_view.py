@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
     QFrame, QListWidget, QPushButton, QLineEdit
 )
 from PySide6.QtCore import Qt, QTimer
+from app.core import analytics
 from app.memory.memory_manager import MemoryManager
 
 class HomeView(QWidget):
@@ -170,7 +171,20 @@ class HomeView(QWidget):
         high_tasks = [t for t in pending_tasks if t.priority == "high"]
         top_focus = high_tasks[0].title if high_tasks else (pending_tasks[0].title if pending_tasks else "None")
         self.activity_list.addItem(f"• Top Priority Focus:       {top_focus}")
-        
+
+        # 2b. Proactive alerts — unread notifications from the background jobs.
+        # Read-only here (no mark-as-read): the chat surfaces + consumes them,
+        # the HUD just mirrors what's currently outstanding.
+        try:
+            alerts = MemoryManager.get_notifications(unread_only=True, limit=5)
+            if alerts:
+                self.activity_list.addItem("")
+                self.activity_list.addItem("---------------- ⚡ Proactive Alerts ----------------")
+                for n in alerts:
+                    self.activity_list.addItem(f"  ⚠ [{n.category}] {n.title}: {n.message}")
+        except Exception:
+            pass
+
         # 3. Active Applications List
         if apps:
             self.activity_list.addItem("")
@@ -185,6 +199,17 @@ class HomeView(QWidget):
             self.activity_list.addItem("---------------- Recent Emails ----------------")
             for e in emails[:3]:
                 self.activity_list.addItem(f"  - [{e.priority.upper()}] {e.subject} (From: {e.sender.split('<')[0].strip()})")
+
+        # 5. Insights — trends & forecasts over our own data (reuses the same
+        # analytics the assistant calls; each returns a short multi-line string).
+        try:
+            self.activity_list.addItem("")
+            self.activity_list.addItem("---------------- 📈 Insights ----------------")
+            for block in (analytics.forecast_token_usage(), analytics.analyze_productivity()):
+                for line in block.splitlines():
+                    self.activity_list.addItem(f"  {line}")
+        except Exception:
+            pass
 
         # Update stats
         self.update_system_stats()
