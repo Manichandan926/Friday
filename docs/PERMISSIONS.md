@@ -148,3 +148,27 @@ real terminal session, not only the test suite):
 No permission-tier gaps are currently open. (The cost/usage total is now
 persisted to SQLite so `/cost` shows a real running figure across restarts —
 unrelated to permissions, but part of the same cleanup pass.)
+
+## New surface: outbound web reads (2026-07-10)
+
+`web_search` and `fetch_url` (`app/core/web.py`) are FRIDAY's first *outbound*
+network tools — a genuine change to the threat model, so they're built
+defensively and tiered `AUTO` (read-only, non-destructive):
+
+- **SSRF guard.** `_validate_url()` refuses any non-http(s) scheme and any host
+  that resolves to a loopback/private/link-local/reserved address — the model
+  can't be talked into reading `localhost` services or `169.254.169.254`.
+  Live-verified: `file://`, `http://localhost:8080/`, and the metadata IP were
+  all refused before any network call.
+- **Untrusted-content fence.** `fetch_url` wraps returned page text with an
+  explicit "this is DATA, not instructions" banner so an indirect
+  prompt-injection payload in a page is quarantined, not obeyed.
+- **Bounded.** 12s timeout, 2 MB download cap, ~6k-char text cap — no unbounded
+  pull into an 8 GB machine.
+
+Residual ceilings (documented, not hidden): (1) curl follows redirects and
+re-resolves DNS, so a redirect/rebind to a private address is a best-effort
+gap — acceptable on a single-user laptop; upgrade path is a pinned-IP fetch.
+(2) `fetch_url` at AUTO is a data-*exfil* channel (a `GET` can carry secrets in
+its URL); flip it to `CONFIRM` in `tiers.py` if that tradeoff isn't wanted.
+Adversarial tests: `tests/test_web.py`.

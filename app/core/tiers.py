@@ -49,6 +49,14 @@ TOOL_TIERS: Dict[str, Tier] = {
     "search_knowledge": Tier.AUTO,
     "get_projects": Tier.AUTO,
     "get_notifications": Tier.AUTO,
+    # web reads — outbound network, but read-only and non-destructive. See the
+    # exfil/injection ceiling noted where these tools are registered; flip
+    # either to CONFIRM here if that tradeoff isn't wanted.
+    "web_search": Tier.AUTO,
+    "fetch_url": Tier.AUTO,
+    # analytics — read-only aggregates over our own data
+    "analyze_productivity": Tier.AUTO,
+    "forecast_token_usage": Tier.AUTO,
     # reversible database writes
     "add_task": Tier.AUTO,
     "complete_task": Tier.AUTO,
