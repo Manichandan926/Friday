@@ -1,0 +1,3 @@
+# Test-only dependencies (not needed to run FRIDAY, only to run the suite).
+pytest>=9.0
+pytest-asyncio>=1.4

@@ -1,0 +1,48 @@
+name: CI
+
+# Run the test suite on every push to main and every pull request.
+# The whole suite runs with a FakeProvider (no LLM calls), so no API keys or
+# secrets are needed — CI is fully hermetic.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel an in-progress run if the same ref is pushed again.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # 3.12 for the broadest wheel coverage (PySide6 etc.); the app also
+          # runs on newer. Bump here if CI should track the dev interpreter.
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Build native command validator
+        # fast_ops loads native/command_validator.so; a couple of shell tests
+        # exercise the C validator's whitelist directly, so build it to match
+        # the real runtime (gcc/make are preinstalled on the runner).
+        run: make -C native libs
+
+      - name: Run test suite
+        # Throwaway, isolated SQLite DB per run (config.py creates the dir).
+        env:
+          DATABASE_URL: sqlite:///${{ runner.temp }}/friday-test.db
+        # `python -m pytest` (not the bare console script) puts the repo root on
+        # sys.path so `import app` and tests/conftest.py resolve. Benchmarks are
+        # excluded — timing assertions are too runner-noisy to gate on.
+        run: python -m pytest tests -q --ignore=tests/benchmarks
