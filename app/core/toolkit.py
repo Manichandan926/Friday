@@ -304,6 +304,116 @@ def _write_file(path: str, content: str) -> str:
     return f"Wrote {len(content)} chars to {dest}{backup_note}."
 
 
+# Reading is AUTO while FRIDAY also has AUTO outbound web tools (fetch_url),
+# so an injected instruction could otherwise read credentials and smuggle
+# them out inside a GET URL. Credential-shaped paths are refused outright —
+# the fence lives here, inside the tool, so it holds no matter what the
+# tiers say (same principle as the home-only write fence).
+_SECRET_DIR_PARTS = {".ssh", ".gnupg", ".aws", ".kube", ".password-store"}
+_SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".kdbx")
+_SECRET_BASENAMES = (
+    ".env", ".netrc", ".git-credentials", ".pgpass", ".npmrc", ".pypirc",
+    "id_rsa", "id_ed25519", "id_ecdsa", "credentials",
+)
+
+
+def _secret_reason(path: Path) -> Optional[str]:
+    """Non-None if this path looks credential-bearing (never read those)."""
+    if any(part in _SECRET_DIR_PARTS for part in path.parts):
+        return "it sits inside a credentials directory"
+    name = path.name.lower()
+    if name.endswith(_SECRET_SUFFIXES):
+        return "it looks like a key/certificate file"
+    if any(name == base or name.startswith(base + ".") for base in _SECRET_BASENAMES):
+        return "it looks like a credentials file"
+    return None
+
+
+@_register(
+    "read_file",
+    "Read a text file under the home directory. Returns up to max_lines lines "
+    "starting at start_line (1-based) — page through big files with start_line. "
+    "Credential-like files (.env, keys, ~/.ssh, …) are always refused.",
+    params={
+        "path": {"type": "string", "description": "e.g. ~/notes/todo.md."},
+        "start_line": {"type": "integer", "description": "First line to return (default 1)."},
+        "max_lines": {"type": "integer", "description": "How many lines (default 120, max 400)."},
+    },
+    required=["path"],
+)
+def _read_file(path: str, start_line: int = 1, max_lines: int = 120) -> str:
+    target = _safe_path(path, ALLOWED_WRITE_ROOTS)  # same home fence as writes
+    reason = _secret_reason(target)
+    if reason:
+        return (
+            f"Refused: not reading {target.name} — {reason}. FRIDAY never "
+            "reads credential files; the user can open it themselves."
+        )
+    if not target.is_file():
+        return f"Not a file: {target}"
+    raw = target.read_bytes()
+    if len(raw) > 2_000_000:
+        return f"Refused: {target.name} is {len(raw):,} bytes — too large to read into chat."
+    if b"\x00" in raw[:1024]:
+        return f"Refused: {target.name} is a binary file, not text."
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return f"Refused: {target.name} is not valid UTF-8 text."
+
+    lines = text.splitlines()
+    start = max(1, int(start_line))
+    count = max(1, min(int(max_lines), 400))
+    chunk = lines[start - 1:start - 1 + count]
+    if not chunk:
+        return f"{target} has {len(lines)} lines; start_line {start} is past the end."
+    body = "\n".join(chunk)
+    if len(body) > 5000:
+        body = body[:5000] + "\n[… truncated — page with start_line]"
+    return f"{target} (lines {start}-{start - 1 + len(chunk)} of {len(lines)}):\n{body}"
+
+
+@_register(
+    "edit_file",
+    "Replace an exact text snippet in a file (home only). old_string must match "
+    "the file byte-for-byte and appear exactly once — read_file first and copy "
+    "the snippet precisely. Backs up before changing. Asks approval first.",
+    params={
+        "path": {"type": "string", "description": "File to edit, e.g. ~/notes/todo.md."},
+        "old_string": {"type": "string", "description": "Exact existing text to replace (must be unique in the file)."},
+        "new_string": {"type": "string", "description": "Replacement text."},
+    },
+    required=["path", "old_string", "new_string"],
+)
+def _edit_file(path: str, old_string: str, new_string: str) -> str:
+    target = _safe_write_path(path)
+    if not target.is_file():
+        return f"Not a file: {target}"
+    if not old_string:
+        return "old_string must be non-empty."
+    if old_string == new_string:
+        return "old_string and new_string are identical — nothing to change."
+    try:
+        text = target.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        return f"Refused: {target.name} is not a text file."
+
+    occurrences = text.count(old_string)
+    if occurrences == 0:
+        return ("old_string not found in the file. Use read_file and copy the "
+                "snippet exactly (whitespace included).")
+    if occurrences > 1:
+        return (f"old_string appears {occurrences} times; include more "
+                "surrounding context so the match is unique.")
+
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup = target.with_name(f"{target.name}.bak-{stamp}")
+    shutil.copy2(target, backup)
+    target.write_text(text.replace(old_string, new_string, 1))
+    return (f"Edited {target}: replaced {len(old_string)} chars with "
+            f"{len(new_string)} (previous version backed up to {backup}).")
+
+
 @_register(
     "create_directory",
     "Create a directory (home only; parents as needed). Asks approval first.",

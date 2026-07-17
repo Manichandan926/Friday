@@ -153,12 +153,19 @@ def looks_social_only(message: str) -> bool:
 # sees enough to answer, but a huge dump (a long shell output, a big list)
 # doesn't re-ride verbatim through every subsequent tool round.
 MAX_TOOL_RESULT_CHARS = 1200
+# read_file exists precisely to bring file content into context (and edit_file
+# needs exact snippets from it), so it earns a bigger window than diagnostics.
+GENEROUS_RESULT_TOOLS = {"read_file": 5400}
 
 
-def _cap_tool_result(text: str) -> str:
-    if text and len(text) > MAX_TOOL_RESULT_CHARS:
-        return text[:MAX_TOOL_RESULT_CHARS] + "\n[… truncated]"
+def _cap_tool_result(text: str, limit: int = MAX_TOOL_RESULT_CHARS) -> str:
+    if text and len(text) > limit:
+        return text[:limit] + "\n[… truncated]"
     return text
+
+
+def _result_limit(tool_name: str) -> int:
+    return GENEROUS_RESULT_TOOLS.get(tool_name, MAX_TOOL_RESULT_CHARS)
 
 
 # "Speak first": the background scheduler queues notifications (due tasks,
@@ -338,7 +345,7 @@ class FridayAssistant:
                 "role": "tool",
                 "tool_call_id": call.id,
                 "name": call.name,
-                "content": _cap_tool_result(result),
+                "content": _cap_tool_result(result, _result_limit(call.name)),
             })
 
         # A clear new request (not a bare decline) rides along so the model
@@ -403,7 +410,7 @@ class FridayAssistant:
                     "role": "tool",
                     "tool_call_id": call.id,
                     "name": call.name,
-                    "content": _cap_tool_result(result),
+                    "content": _cap_tool_result(result, _result_limit(call.name)),
                 })
 
             if needs_approval:

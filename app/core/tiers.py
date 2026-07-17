@@ -87,7 +87,10 @@ TOOL_TIERS: Dict[str, Tier] = {
     "open_path": Tier.CONFIRM,
     "play_media": Tier.CONFIRM,
     # filesystem writes (backed up on overwrite, home-dir only)
+    # read-only, home-fenced, refuses credential-shaped paths inside the tool
+    "read_file": Tier.AUTO,
     "write_file": Tier.CONFIRM,
+    "edit_file": Tier.CONFIRM,
     "create_directory": Tier.CONFIRM,
     # shell: tier depends on the command — see classify_command()
     "run_shell": Tier.CONFIRM,  # placeholder; classify() overrides dynamically
@@ -167,6 +170,11 @@ def describe_call(tool_name: str, arguments: Optional[Dict[str, Any]]) -> str:
     if tool_name == "write_file":
         content = args.get("content", "") or ""
         return f"write file `{args.get('path', '?')}` ({len(content)} chars)"
+    if tool_name == "edit_file":
+        old = args.get("old_string", "") or ""
+        new = args.get("new_string", "") or ""
+        return (f"edit file `{args.get('path', '?')}` "
+                f"(replace {len(old)} chars with {len(new)})")
     if tool_name == "create_directory":
         return f"create directory `{args.get('path', '?')}`"
     if tool_name == "open_app":
