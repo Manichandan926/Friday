@@ -89,12 +89,13 @@ GROUPS: Dict[str, Tuple[Tuple[str, ...], FrozenSet[str]]] = {
         ("volume", "mute", "unmute", "brightness", "screen", "screenshot",
          "clipboard", "copy", "paste", "play", "pause", "skip", "music",
          "song", "video", "media", "open", "launch", "app", "notify",
-         "notification"),
+         "notification", "see", "look", "looking", "watching", "display",
+         "window", "dialog", "error"),
         frozenset({
             "media_control", "get_volume", "set_volume", "toggle_mute",
             "get_brightness", "set_brightness", "send_notification",
-            "take_screenshot", "get_clipboard", "set_clipboard",
-            "open_app", "open_path", "play_media",
+            "take_screenshot", "look_at_screen", "get_clipboard",
+            "set_clipboard", "open_app", "open_path", "play_media",
         }),
     ),
     "analytics": (
