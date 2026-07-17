@@ -78,11 +78,13 @@ GROUPS: Dict[str, Tuple[Tuple[str, ...], FrozenSet[str]]] = {
     "files": (
         ("file", "files", "folder", "folders", "directory", "directories",
          "write", "save", "create", "watch", "watching", "path",
-         "document", "documents", "downloads"),
+         "document", "documents", "downloads", "read", "edit", "change",
+         "fix", "update", "code", "script", "config", "readme", "log",
+         "logs", "line", "lines"),
         frozenset({
-            "write_file", "create_directory", "watch_directory",
-            "unwatch_directory", "list_watched_directories",
-            "get_file_events", "open_path",
+            "read_file", "edit_file", "write_file", "create_directory",
+            "watch_directory", "unwatch_directory",
+            "list_watched_directories", "get_file_events", "open_path",
         }),
     ),
     "desktop": (
