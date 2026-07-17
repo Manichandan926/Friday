@@ -78,6 +78,10 @@ TOOL_TIERS: Dict[str, Tier] = {
     "set_brightness": Tier.AUTO,
     "send_notification": Tier.AUTO,
     "take_screenshot": Tier.AUTO,  # additive: writes a fresh timestamped PNG
+    # AUTO because capture is gated by GNOME's per-shot portal consent dialog —
+    # an OS-enforced click the model cannot talk past (stronger than a chat
+    # "yes"). The description comes back untrusted-fenced like web content.
+    "look_at_screen": Tier.AUTO,
     "get_clipboard": Tier.AUTO,
     "set_clipboard": Tier.AUTO,
     "calculate": Tier.AUTO,
