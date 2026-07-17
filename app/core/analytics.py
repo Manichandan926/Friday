@@ -12,12 +12,15 @@ of the read path.
 Every function returns a plain string for the model to read.
 """
 import datetime
+import os
 
 from app.memory.memory_manager import MemoryManager
 
-# Groq's free tier is ~100k tokens/day; the forecast defaults to this but takes
-# an override. It's the provider we ship on and the one that actually bites.
-DEFAULT_DAILY_TOKEN_LIMIT = 100_000
+# Daily token budget the forecast measures against. Default matches Groq's
+# free tier for llama-4-scout (500k TPD per console.groq.com/docs/rate-limits,
+# checked 2026-07-17) — the provider+model we ship on. Override via env when
+# the model or plan changes: FRIDAY_DAILY_TOKEN_LIMIT=100000.
+DEFAULT_DAILY_TOKEN_LIMIT = int(os.getenv("FRIDAY_DAILY_TOKEN_LIMIT", "500000"))
 DEFAULT_FORECAST_PROVIDER = "Groq"
 
 

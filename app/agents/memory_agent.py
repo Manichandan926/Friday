@@ -1,4 +1,5 @@
 import json
+import re
 from typing import List, Dict, Any
 
 from app.llm.provider import get_llm_provider
@@ -33,6 +34,30 @@ No markdown wrapping. Raw JSON only."""
 # Bounds both the DB scan and the prompt token cost per turn.
 _DEDUP_LOOKBACK = 100
 
+# Pre-gate: extraction costs a full LLM call per exchange, but most turns are
+# questions/commands ("what's my RAM?") with nothing to learn. Only analyze
+# when the user actually discloses something about themselves. Fail direction:
+# a false positive wastes one call (the model returns empty); keep the
+# patterns broad enough that real disclosures never get skipped.
+_DISCLOSURE_PATTERN = re.compile(
+    r"\b(?:"
+    r"i\s*(?:am|was|will|have|had|use|work|live|study|want|need|plan|like|"
+    r"love|hate|prefer|enjoy|play|watch|read|think|feel|believe)"
+    r"|i'?m|i'?ll|i'?ve|i'?d"
+    r"|my\s+name|call\s+me|my\s+(?:favorite|favourite|birthday|goal|dream|"
+    r"family|friend|girlfriend|boyfriend|wife|husband|college|job|company)"
+    r"|remember\s+(?:that|this|me)|note\s+that|don'?t\s+forget"
+    r"|born|allergic|graduated?"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def has_self_disclosure(text: str) -> bool:
+    """True if the user's message looks like it contains a personal fact
+    worth an extraction pass."""
+    return bool(_DISCLOSURE_PATTERN.search(text))
+
 class MemoryAgent:
     def __init__(self):
         try:
@@ -51,6 +76,13 @@ class MemoryAgent:
         # every turn just to slice off 4).
         recent = MemoryManager.get_recent_messages(conversation_id, 4)
         if len(recent) < 2:
+            return 0
+
+        # Gate BEFORE spending an LLM call: if no user message in the window
+        # discloses anything personal, there is nothing to extract.
+        user_texts = [m.content for m in recent if m.role == "user"]
+        if not any(has_self_disclosure(t) for t in user_texts):
+            logger.debug("MemoryAgent: no self-disclosure signal, skipping extraction.")
             return 0
 
         exchange_lines = []
