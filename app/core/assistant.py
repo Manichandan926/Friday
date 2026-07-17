@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from app.core import context, tiers, toolkit
+from app.core import context, tiers, tool_router, toolkit
 from app.core.logger import logger
 from app.core.tiers import Tier
 from app.llm.provider import ProviderNotConfigured, get_llm_provider
@@ -293,7 +293,9 @@ class FridayAssistant:
             # Skip the tool catalogue entirely for pure greetings/acks — big
             # TPD saving on the cheapest turns, no capability lost.
             tools_enabled = not looks_social_only(user_message)
-            reply = await self._run_tool_loop(conversation_id, messages, tools_enabled)
+            reply = await self._run_tool_loop(
+                conversation_id, messages, tools_enabled, user_message=user_message
+            )
 
         MemoryManager.add_message(conversation_id, "assistant", reply)
 
@@ -357,8 +359,12 @@ class FridayAssistant:
     # ── agentic tool loop ─────────────────────────────────
 
     async def _run_tool_loop(self, conversation_id: int, messages: List[Dict[str, Any]],
-                             tools_enabled: bool = True) -> str:
-        tools = toolkit.specs() if tools_enabled else None
+                             tools_enabled: bool = True,
+                             user_message: Optional[str] = None) -> str:
+        # Route to the relevant tool subset when we know the user's message;
+        # unknown contexts (approval continuations) get the full catalogue.
+        # tool_router is fail-open, so worst case equals the old behaviour.
+        tools = tool_router.select_specs(user_message) if tools_enabled else None
 
         try:
             reply = await self.provider.chat(messages, tools=tools)
