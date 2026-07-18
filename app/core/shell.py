@@ -220,10 +220,15 @@ def execute_command(command: str) -> Tuple[bool, str]:
         if len(output) > 3000:
             output = output[:3000] + "\n... (output truncated)"
 
+        # Success means the command SAID it succeeded (exit 0) — stdout prose
+        # alone must never pass for evidence that something worked.
+        success = result.returncode == 0
         if not output:
             output = "(command completed with no output)"
+        if not success:
+            output = f"(exit code {result.returncode})\n{output}"
 
-        return True, output
+        return success, output
 
     except subprocess.TimeoutExpired:
         logger.warning(f"ShellExecutor timeout: {command}")

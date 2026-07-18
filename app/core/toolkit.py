@@ -95,7 +95,10 @@ _register("get_current_time", "Current local date and time. Use whenever dates/t
 def _run_shell(command: str) -> str:
     from app.core.shell import execute_command
     success, output = execute_command(command)
-    return f"$ {command}\n{output}"
+    # The verdict rides in the result so the model can't mistake error prose
+    # for success (a failed command's stdout can look reassuring).
+    status = "OK (exit 0)" if success else "FAILED"
+    return f"$ {command}\n[{status}]\n{output}"
 
 
 # ── personal data (read) ──────────────────────────────────
@@ -385,7 +388,14 @@ def _write_file(path: str, content: str) -> str:
         backup_note = f" (previous version backed up to {backup})"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(content)
-    return f"Wrote {len(content)} chars to {dest}{backup_note}."
+    # Self-verification: report what's actually on disk, not what we meant.
+    on_disk = dest.read_bytes()
+    expected = content.encode("utf-8")
+    if on_disk != expected:
+        return (f"WRITE FAILED verification: {dest} holds {len(on_disk)} bytes "
+                f"but {len(expected)} were expected. Do not assume the file is "
+                "correct — read it back before relying on it.")
+    return f"Wrote {dest} — verified {len(on_disk)} bytes on disk{backup_note}."
 
 
 # Reading is AUTO while FRIDAY also has AUTO outbound web tools (fetch_url),
@@ -493,9 +503,24 @@ def _edit_file(path: str, old_string: str, new_string: str) -> str:
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     backup = target.with_name(f"{target.name}.bak-{stamp}")
     shutil.copy2(target, backup)
-    target.write_text(text.replace(old_string, new_string, 1))
-    return (f"Edited {target}: replaced {len(old_string)} chars with "
-            f"{len(new_string)} (previous version backed up to {backup}).")
+    intended = text.replace(old_string, new_string, 1)
+    target.write_text(intended)
+    # Self-verification: read back and show the changed region as evidence,
+    # so the model reports what the file now says — not what it hoped.
+    on_disk = target.read_text()
+    if on_disk != intended:
+        return (f"EDIT FAILED verification: {target} on disk does not match "
+                "the intended result — read it back before relying on it.")
+    # The prefix before the (unique) match is unchanged, so the replacement
+    # starts at the same offset in the new text.
+    pos = text.index(old_string)
+    first_ln = on_disk.count("\n", 0, pos) + 1
+    span = new_string.count("\n") + 1 if new_string else 1
+    lines = on_disk.splitlines()
+    lo, hi = max(0, first_ln - 2), min(len(lines), first_ln - 1 + span + 1)
+    snippet = "\n".join(f"{i + 1}| {lines[i]}" for i in range(lo, hi))[:600]
+    return (f"Edited {target} — verified on disk (backup: {backup.name}). "
+            f"The changed region now reads:\n{snippet}")
 
 
 @_register(
@@ -507,7 +532,9 @@ def _edit_file(path: str, old_string: str, new_string: str) -> str:
 def _create_directory(path: str) -> str:
     dest = _safe_write_path(path)
     dest.mkdir(parents=True, exist_ok=True)
-    return f"Directory ready: {dest}"
+    if not dest.is_dir():
+        return f"CREATE FAILED verification: {dest} does not exist after mkdir."
+    return f"Directory ready (verified on disk): {dest}"
 
 
 # ── file watching (Rust watcher daemon) ───────────────────
