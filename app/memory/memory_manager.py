@@ -1,6 +1,8 @@
+import re
 from datetime import datetime
 from typing import List, Optional
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import OperationalError, DatabaseError
 from app.memory.database import get_db_session
 from app.memory.models import Conversation, Message, MemoryItem, Email, Task, Application, KnowledgeItem, Project, Notification, Plan, PlanStep, Routine, UsageRecord
 
@@ -248,12 +250,40 @@ class MemoryManager:
 
     @staticmethod
     def search_knowledge(query: str) -> List[KnowledgeItem]:
-        """Simple substring search across title, content, and tags."""
+        """Full-text search across title, content, and tags, BM25-ranked
+        (most relevant first) via the SQLite FTS5 index. Terms are prefix-
+        matched and OR-combined for recall (a search for 'sql graph' finds
+        notes mentioning either). Falls back to a LIKE substring search when
+        FTS5 is unavailable or the query has no indexable terms."""
+        q = (query or "").strip()
+        if not q:
+            return []
         with get_db_session() as session:
+            terms = re.findall(r"\w+", q)
+            if terms:
+                # Quote each term (so punctuation can't inject FTS operators) and
+                # prefix-match it; OR them together.
+                match_expr = " OR ".join(f'"{t}"*' for t in terms)
+                try:
+                    rows = session.execute(
+                        text("SELECT ki.id FROM knowledge_items ki "
+                             "JOIN knowledge_fts f ON f.rowid = ki.id "
+                             "WHERE knowledge_fts MATCH :expr "
+                             "ORDER BY bm25(knowledge_fts)"),
+                        {"expr": match_expr},
+                    ).all()
+                    ids = [r[0] for r in rows]
+                    if not ids:
+                        return []
+                    by_id = {it.id: it for it in session.scalars(
+                        select(KnowledgeItem).where(KnowledgeItem.id.in_(ids)))}
+                    return [by_id[i] for i in ids if i in by_id]  # preserve rank
+                except (OperationalError, DatabaseError):
+                    pass  # no FTS index / FTS5 unavailable → LIKE fallback below
             stmt = select(KnowledgeItem).where(
-                KnowledgeItem.title.ilike(f"%{query}%") |
-                KnowledgeItem.content.ilike(f"%{query}%") |
-                KnowledgeItem.tags.ilike(f"%{query}%")
+                KnowledgeItem.title.ilike(f"%{q}%") |
+                KnowledgeItem.content.ilike(f"%{q}%") |
+                KnowledgeItem.tags.ilike(f"%{q}%")
             )
             return list(session.scalars(stmt).all())
 

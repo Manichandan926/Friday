@@ -35,7 +35,11 @@ def setup_test_database():
     app.memory.database.SessionLocal = sessionmaker(
         autocommit=False, autoflush=False, expire_on_commit=False, bind=test_engine
     )
-    
+    # Build the FTS5 index against the test engine too, so search behaves like
+    # production (the sync triggers also keep it consistent when the
+    # clean_database_tables fixture deletes knowledge_items rows between tests).
+    app.memory.database.ensure_knowledge_fts()
+
     yield
     
     # Restore original references
