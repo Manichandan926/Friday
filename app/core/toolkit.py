@@ -288,8 +288,10 @@ def _add_application(company: str, role: str, status: str = "applied", deadline:
                  "description": "One sentence: what the finished task achieves."},
         "steps": {
             "type": "array", "items": {"type": "string"},
-            "description": f"Ordered concrete steps (max {task_engine.MAX_PLAN_STEPS}), "
-                           "each doable with the available tools.",
+            "description": f"Ordered concrete steps (max {task_engine.MAX_PLAN_STEPS}). "
+                           "Each step is ONE action to perform, stated as an "
+                           "instruction with the details it needs (paths, exact "
+                           "content) — never bare data or file contents.",
         },
     },
     required=["goal", "steps"],
@@ -310,7 +312,8 @@ def _start_task(goal: str, steps: list = None) -> str:
                 "cancel it first if this new task should replace it.")
     plan = MemoryManager.create_plan(goal.strip(), cleaned)
     return (f"Task {plan.id} started: {plan.goal} ({len(cleaned)} steps queued). "
-            "Execution begins now.")
+            "The system executes the steps itself, one by one — do NOT perform "
+            "any of the steps now; just briefly tell the user the task is underway.")
 
 
 @_register(
