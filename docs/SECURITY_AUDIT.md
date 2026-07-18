@@ -116,10 +116,16 @@ are unaffected (14 legit commands asserted still-allowed in the test suite).
 - **AUTO read + AUTO `fetch_url` = an exfil ceiling for *non-credential* files.**
   The secret fences stop keys/`.env`, but `read_file`/`cat` can still read
   `~/Documents/passwords.txt` (not credential-shaped) and `fetch_url` can still
-  carry it out — both AUTO, and possible unattended in a routine. This is the
-  tradeoff already noted in `tiers.py`. Options if you want it closed: make
-  `fetch_url` CONFIRM, or forbid long/opaque outbound query strings during
-  unattended routine runs. **Not changed** — it's a posture decision for you.
+  carry it out — both AUTO, and possible unattended in a routine.
+  **Closed for the unattended path (2026-07-18):** `fetch_url` now refuses any
+  URL carrying a query string while a routine is running (`toolkit.routine_context()`
+  sets a `ContextVar`; the fence lives inside the tool, so it holds regardless
+  of tier — same principle as the credential fence). This breaks the smuggle-out
+  channel (`?d=<secret>`) for unattended runs while leaving interactive fetches
+  untouched, since the user can see the URL there. Tests: `test_routine_exfil_fence.py`.
+  *Remaining, deliberately not closed:* path-based exfil (`/collect/<secret>`)
+  in a routine, and the whole ceiling during **interactive** turns — both need
+  a human in the loop who can see the request, which is the design intent.
 - **The C validator doesn't know these new rules** — only the Python wrapper
   (`is_command_safe`) does. That's safe because the wrapper always runs the
   guards first, but the native validator alone would still say "safe" for
