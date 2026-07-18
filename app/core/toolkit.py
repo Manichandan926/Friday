@@ -278,6 +278,98 @@ def _add_application(company: str, role: str, status: str = "applied", deadline:
     return f"Application tracked: {company} — {role} ({status})."
 
 
+# ── routines (standing autonomous behaviors) ─────────────
+
+@_register(
+    "add_routine",
+    "Create a standing routine FRIDAY runs by itself on a schedule (daily at a "
+    "time, or every N minutes — min 15). Unattended runs can only use auto-tier "
+    "tools; anything needing approval is refused and reported. Asks approval "
+    "once, when the routine is created.",
+    params={
+        "name": {"type": "string", "description": "Short unique name, e.g. 'morning brief'."},
+        "instruction": {"type": "string",
+                        "description": "What to do each run, as a full instruction."},
+        "schedule_type": {"type": "string", "enum": ["daily", "interval"]},
+        "time_of_day": {"type": "string",
+                        "description": "For daily: local 24h time 'HH:MM', e.g. '08:00'."},
+        "interval_minutes": {"type": "integer",
+                             "description": "For interval: minutes between runs (min 15)."},
+    },
+    required=["name", "instruction", "schedule_type"],
+)
+def _add_routine(name: str, instruction: str, schedule_type: str,
+                 time_of_day: str = None, interval_minutes: int = None) -> str:
+    from app.core import routine_runner
+    name = (name or "").strip()
+    instruction = (instruction or "").strip()
+    if not name or not instruction:
+        raise ValueError("name and instruction must be non-empty")
+    if MemoryManager.get_routine_by_name(name) is not None:
+        return f"A routine named '{name}' already exists — pick another name or delete it first."
+    if len(MemoryManager.get_routines()) >= routine_runner.MAX_ROUTINES:
+        return f"Routine limit reached ({routine_runner.MAX_ROUTINES}) — delete one first."
+    if schedule_type == "daily":
+        try:
+            datetime.datetime.strptime((time_of_day or "").strip(), "%H:%M")
+        except ValueError:
+            raise ValueError("daily routines need time_of_day as 24h 'HH:MM', e.g. '08:00'")
+        routine = MemoryManager.add_routine(name, instruction, "daily",
+                                            time_of_day=time_of_day.strip())
+        when = f"every day at {routine.time_of_day}"
+    elif schedule_type == "interval":
+        if not interval_minutes or int(interval_minutes) < routine_runner.MIN_INTERVAL_MINUTES:
+            raise ValueError(
+                f"interval_minutes must be at least {routine_runner.MIN_INTERVAL_MINUTES}"
+            )
+        routine = MemoryManager.add_routine(name, instruction, "interval",
+                                            interval_minutes=int(interval_minutes))
+        when = f"every {routine.interval_minutes} minutes"
+    else:
+        raise ValueError("schedule_type must be 'daily' or 'interval'")
+    return (f"Routine {routine.id} created: '{routine.name}' runs {when}. "
+            "Reports will arrive as notifications.")
+
+
+@_register(
+    "list_routines",
+    "List the standing routines: schedule, enabled state, last run.",
+)
+def _list_routines() -> str:
+    routines = MemoryManager.get_routines()
+    if not routines:
+        return "No routines set up."
+    lines = []
+    for r in routines:
+        when = (f"daily at {r.time_of_day}" if r.schedule_type == "daily"
+                else f"every {r.interval_minutes} min")
+        state = "on" if r.enabled else "off"
+        last = r.last_run_at.strftime("%b %d %H:%M") if r.last_run_at else "never"
+        lines.append(f"[{r.id}] {r.name} — {when}, {state}, last ran {last}: {r.instruction}")
+    return "\n".join(lines)
+
+
+@_register(
+    "update_routine",
+    "Enable, disable, or delete a routine (get the id from list_routines).",
+    params={
+        "routine_id": {"type": "integer"},
+        "action": {"type": "string", "enum": ["enable", "disable", "delete"]},
+    },
+    required=["routine_id", "action"],
+)
+def _update_routine(routine_id: int, action: str) -> str:
+    routine = MemoryManager.get_routine(routine_id)
+    if routine is None:
+        return f"No routine with id {routine_id}."
+    if action == "delete":
+        MemoryManager.delete_routine(routine_id)
+        return f"Routine '{routine.name}' deleted."
+    enabled = action == "enable"
+    MemoryManager.set_routine_enabled(routine_id, enabled)
+    return f"Routine '{routine.name}' {'enabled' if enabled else 'disabled'}."
+
+
 # ── task mode (plan → execute → verify) ──────────────────
 
 @_register(

@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List, Optional
 from sqlalchemy import func, select
 from app.memory.database import get_db_session
-from app.memory.models import Conversation, Message, MemoryItem, Email, Task, Application, KnowledgeItem, Project, Notification, Plan, PlanStep, UsageRecord
+from app.memory.models import Conversation, Message, MemoryItem, Email, Task, Application, KnowledgeItem, Project, Notification, Plan, PlanStep, Routine, UsageRecord
 
 class MemoryManager:
     # --- Conversations ---
@@ -404,6 +404,68 @@ class MemoryManager:
                 stmt = stmt.where(func.lower(UsageRecord.provider) == provider.lower())
             tin, tout, calls = session.execute(stmt).one()
             return int(tin), int(tout), int(calls)
+
+    # --- Routines (standing autonomous behaviors) ---
+
+    @staticmethod
+    def add_routine(name: str, instruction: str, schedule_type: str,
+                    time_of_day: Optional[str] = None,
+                    interval_minutes: Optional[int] = None) -> Routine:
+        with get_db_session() as session:
+            routine = Routine(
+                name=name, instruction=instruction, schedule_type=schedule_type,
+                time_of_day=time_of_day, interval_minutes=interval_minutes,
+            )
+            session.add(routine)
+            session.flush()
+            return routine
+
+    @staticmethod
+    def get_routine(routine_id: int) -> Optional[Routine]:
+        with get_db_session() as session:
+            return session.get(Routine, routine_id)
+
+    @staticmethod
+    def get_routine_by_name(name: str) -> Optional[Routine]:
+        with get_db_session() as session:
+            return session.scalars(
+                select(Routine).where(func.lower(Routine.name) == name.lower())
+            ).first()
+
+    @staticmethod
+    def get_routines(enabled_only: bool = False) -> List[Routine]:
+        with get_db_session() as session:
+            stmt = select(Routine).order_by(Routine.id)
+            if enabled_only:
+                stmt = stmt.where(Routine.enabled == True)  # noqa: E712
+            return list(session.scalars(stmt).all())
+
+    @staticmethod
+    def set_routine_enabled(routine_id: int, enabled: bool) -> Optional[Routine]:
+        with get_db_session() as session:
+            routine = session.get(Routine, routine_id)
+            if routine is None:
+                return None
+            routine.enabled = enabled
+            session.flush()
+            return routine
+
+    @staticmethod
+    def delete_routine(routine_id: int) -> bool:
+        with get_db_session() as session:
+            routine = session.get(Routine, routine_id)
+            if routine is None:
+                return False
+            session.delete(routine)
+            return True
+
+    @staticmethod
+    def touch_routine(routine_id: int, ran_at: datetime) -> None:
+        with get_db_session() as session:
+            routine = session.get(Routine, routine_id)
+            if routine is not None:
+                routine.last_run_at = ran_at
+                session.flush()
 
     # --- Task-mode plans ---
 

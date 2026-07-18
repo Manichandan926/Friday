@@ -58,6 +58,16 @@ class FridayScheduler:
             id="system_health",
             replace_existing=True
         )
+
+        # User-defined autonomous routines — checked every minute; the runner
+        # itself decides what's due and consumes runs (see routine_runner.py)
+        self.scheduler.add_job(
+            self._routines_job,
+            "interval",
+            minutes=1,
+            id="routines",
+            replace_existing=True
+        )
         
         self.scheduler.start()
         logger.info("FRIDAY background scheduler started.")
@@ -201,6 +211,36 @@ class FridayScheduler:
                         self._notified_tasks.add(task.id)
         except Exception as e:
             logger.error(f"Error in reminders background task: {e}")
+
+    def _routines_job(self) -> None:
+        """Run any due user-defined routines (unattended tool loops — the
+        tier gate holds them to AUTO tools; see routine_runner.py)."""
+        from app.core.routine_runner import run_due_routines
+        from app.memory.memory_manager import MemoryManager as MM
+
+        # cheap pre-check: don't spin up an event loop + provider every
+        # minute when nothing is due
+        from app.core.routine_runner import is_due
+        if not any(is_due(r) for r in MM.get_routines(enabled_only=True)):
+            return
+
+        import asyncio
+        from app.llm.provider import get_llm_provider
+        try:
+            provider = get_llm_provider()
+        except Exception as e:
+            logger.error(f"Routines job: no LLM provider available: {e}")
+            return
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            ran = loop.run_until_complete(run_due_routines(provider))
+            if ran:
+                logger.info(f"Routines job: {ran} routine(s) processed.")
+        except Exception as e:
+            logger.error(f"Error in routines job: {e}")
+        finally:
+            loop.close()
 
     def _send_notification(self, title: str, message: str) -> None:
         """Sends native system notifications using notify-send (common on Linux/Fedora)."""
