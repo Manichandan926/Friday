@@ -47,6 +47,8 @@ TOOL_TIERS: Dict[str, Tier] = {
     "get_interviews": Tier.AUTO,
     "get_knowledge": Tier.AUTO,
     "search_knowledge": Tier.AUTO,
+    "list_knowledge_topics": Tier.AUTO,
+    "browse_knowledge": Tier.AUTO,
     "get_projects": Tier.AUTO,
     "get_notifications": Tier.AUTO,
     # web reads — outbound network, but read-only and non-destructive. See the

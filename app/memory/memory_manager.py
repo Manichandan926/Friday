@@ -231,9 +231,11 @@ class MemoryManager:
     @staticmethod
     def add_knowledge_item(title: str, category: str, content: str,
                            tags: Optional[str] = None) -> KnowledgeItem:
+        from app.core.knowledge import normalize_category, normalize_tags
         with get_db_session() as session:
             item = KnowledgeItem(
-                title=title, category=category, content=content, tags=tags
+                title=title, category=normalize_category(category),
+                content=content, tags=normalize_tags(tags),
             )
             session.add(item)
             session.flush()
@@ -241,12 +243,51 @@ class MemoryManager:
 
     @staticmethod
     def get_knowledge_items(category: Optional[str] = None) -> List[KnowledgeItem]:
+        from app.core.knowledge import normalize_category
         with get_db_session() as session:
             stmt = select(KnowledgeItem)
             if category:
-                stmt = stmt.where(KnowledgeItem.category == category)
+                stmt = stmt.where(KnowledgeItem.category == normalize_category(category))
             stmt = stmt.order_by(KnowledgeItem.created_at.desc())
             return list(session.scalars(stmt).all())
+
+    @staticmethod
+    def list_knowledge_categories() -> List[tuple]:
+        """(category, count) pairs, most-populated first — the vault's shape."""
+        with get_db_session() as session:
+            rows = session.execute(
+                select(KnowledgeItem.category, func.count(KnowledgeItem.id))
+                .group_by(KnowledgeItem.category)
+                .order_by(func.count(KnowledgeItem.id).desc())
+            ).all()
+            return [(cat, n) for cat, n in rows]
+
+    @staticmethod
+    def list_knowledge_tags() -> List[tuple]:
+        """(tag, count) pairs across the vault, most-used first. Tags live as a
+        comma-separated string per item, so they're split and tallied here."""
+        from app.core.knowledge import split_tags
+        counts: dict = {}
+        with get_db_session() as session:
+            for (raw,) in session.execute(select(KnowledgeItem.tags)).all():
+                for tag in split_tags(raw):
+                    counts[tag] = counts.get(tag, 0) + 1
+        return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+    @staticmethod
+    def get_knowledge_by_tag(tag: str) -> List[KnowledgeItem]:
+        """Items carrying an exact tag (case-insensitive, whole-tag — 'sql'
+        does not match a 'nosql' tag). Filtered in Python for exact membership
+        rather than a LIKE that would match substrings of other tags."""
+        from app.core.knowledge import split_tags, normalize_tags
+        want = normalize_tags(tag)
+        if not want:
+            return []
+        with get_db_session() as session:
+            items = session.scalars(
+                select(KnowledgeItem).order_by(KnowledgeItem.created_at.desc())
+            ).all()
+            return [it for it in items if want in split_tags(it.tags)]
 
     @staticmethod
     def search_knowledge(query: str) -> List[KnowledgeItem]:
