@@ -97,25 +97,28 @@ async def _run(routine: Routine, provider) -> str:
     ]
     tools = tool_router.select_specs(routine.instruction)
 
-    reply = await provider.chat(messages, tools=tools)
-    for _ in range(MAX_ROUTINE_ROUNDS):
-        if not reply.tool_calls:
-            break
-        messages.append({
-            "role": "assistant",
-            "content": reply.text,
-            "tool_calls": reply.tool_calls,
-            "raw_content": reply.raw_content,
-        })
-        for call in reply.tool_calls:
-            result = toolkit.execute(call.name, call.arguments)
-            messages.append({
-                "role": "tool",
-                "tool_call_id": call.id,
-                "name": call.name,
-                "content": _cap_tool_result(result, _result_limit(call.name)),
-            })
+    # Mark the whole loop as unattended so tool-side fences (e.g. fetch_url's
+    # query-string exfil block) tighten while nobody is watching.
+    with toolkit.routine_context():
         reply = await provider.chat(messages, tools=tools)
+        for _ in range(MAX_ROUTINE_ROUNDS):
+            if not reply.tool_calls:
+                break
+            messages.append({
+                "role": "assistant",
+                "content": reply.text,
+                "tool_calls": reply.tool_calls,
+                "raw_content": reply.raw_content,
+            })
+            for call in reply.tool_calls:
+                result = toolkit.execute(call.name, call.arguments)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "name": call.name,
+                    "content": _cap_tool_result(result, _result_limit(call.name)),
+                })
+            reply = await provider.chat(messages, tools=tools)
     return (reply.text or "(routine produced no report)").strip()
 
 
