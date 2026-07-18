@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from app.core import context, tiers, tool_router, toolkit
+from app.core import context, task_engine, tiers, tool_router, toolkit
 from app.core.logger import logger
 from app.core.tiers import Tier
 from app.llm.provider import ProviderNotConfigured, get_llm_provider
@@ -95,6 +95,9 @@ class PendingApproval:
     """
     messages: List[Dict[str, Any]]
     calls: List[ToolCall]
+    # When the paused loop was executing a task-mode step, its id — so the
+    # resolution's final text concludes that step (see task_engine.advance).
+    step_id: Optional[int] = None
 
 SYSTEM_PROMPT = """\
 You are FRIDAY, a personal AI assistant your person built, running on their \
@@ -102,7 +105,9 @@ Linux laptop (Fedora, GNOME/Wayland). You act through tools: system stats; \
 their tasks, emails, applications and notes; shell diagnostics; and desktop \
 control (media, volume, brightness, notifications, clipboard, open apps/files, \
 play media, reminders, math). Asked to do one of these? Just call the tool — \
-don't narrate the steps.
+don't narrate the steps. For a job that needs several actions in sequence, \
+call start_task with the goal and concrete steps — once the user approves the \
+plan, the system executes it step by step itself.
 
 Voice: a sharp, dependable friend — warm, direct, a little playful; no filler \
 or flattery. You care about their placements, projects and study like a \
@@ -223,6 +228,9 @@ so things like *"what's due this week?"* or *"how much RAM am I using?"* work.
 - **Open a file or link** — *"open my Downloads"*, *"open github.com"*
 - **Play media** — *"play ~/Music/song.mp3"*
 - **Write a file, make a folder, or change something with a shell command**
+- **Multi-step tasks** — *"set up a notes folder and an index file in it"* —
+  I show you the full plan first; one **yes** runs it step by step (risky
+  steps still ask individually). `/task` shows progress anytime.
 
 You'll see a **⏸ Approval needed** box — reply **yes** (or *"yeah"*, *"ok"*,
 *"go ahead"*) to run it, anything else to skip.
@@ -240,6 +248,7 @@ yourself instead. This limit is enforced in code, not just my judgment.
 | `/help` | Show this help |
 | `/brief` | Your daily briefing — tasks, emails, focus |
 | `/plan goal` | Turn a goal into a task plan — e.g. `/plan finish my resume` |
+| `/task` | Progress of the current multi-step task (`/task cancel` stops it) |
 | `/run command` | Run a safe, read-only shell command — e.g. `/run df -h` |
 | `/search query` | Search your saved notes — e.g. `/search s3 policy` |
 | `/learn cat \| title \| content` | Save a note — e.g. `/learn aws \| S3 \| policies are JSON` |
@@ -303,6 +312,25 @@ class FridayAssistant:
             reply = await self._run_tool_loop(
                 conversation_id, messages, tools_enabled, user_message=user_message
             )
+
+        # ── task mode ── if a plan is open and nothing is paused waiting on
+        # the user, advance it now (bounded per turn) and fold the progress
+        # report into the reply. A fresh pause inherits the step it came from.
+        if conversation_id in self._pending:
+            if pending is not None and pending.step_id is not None:
+                self._pending[conversation_id].step_id = pending.step_id
+        else:
+            try:
+                note = await task_engine.advance(
+                    self, conversation_id,
+                    concluded_step_id=pending.step_id if pending is not None else None,
+                    last_reply=reply,
+                )
+            except Exception as e:  # engine trouble must never eat the reply
+                logger.error(f"Task engine advance failed: {e}")
+                note = None
+            if note:
+                reply = f"{reply}\n\n{note}" if reply and reply.strip() else note
 
         MemoryManager.add_message(conversation_id, "assistant", reply)
 
@@ -510,6 +538,13 @@ class FridayAssistant:
                 due_str = t["due_date"].strftime("%Y-%m-%d") if t.get("due_date") else "No deadline"
                 reply += f"- **{t['title']}** ({t['priority'].upper()} | Due: {due_str})\n"
             return reply
+
+        if cleaned_msg in ("/task", "/task status"):
+            return task_engine.render_status()
+
+        if cleaned_msg == "/task cancel":
+            # goes through the gate like everything else (AUTO + audit log)
+            return toolkit.execute("cancel_task", {})
 
         if cleaned_msg.startswith("/run "):
             from app.core.shell import execute_command

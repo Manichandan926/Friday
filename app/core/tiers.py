@@ -57,6 +57,13 @@ TOOL_TIERS: Dict[str, Tier] = {
     # analytics — read-only aggregates over our own data
     "analyze_productivity": Tier.AUTO,
     "forecast_token_usage": Tier.AUTO,
+    # task mode — the plan itself is the approval surface: one "yes" on
+    # start_task launches autonomous execution, but every step's tool calls
+    # still pass this same tier gate individually.
+    "start_task": Tier.CONFIRM,
+    "get_task_status": Tier.AUTO,
+    "update_task_step": Tier.AUTO,  # only redirects an already-approved plan
+    "cancel_task": Tier.AUTO,       # stopping is always safe
     # reversible database writes
     "add_task": Tier.AUTO,
     "complete_task": Tier.AUTO,
@@ -187,5 +194,10 @@ def describe_call(tool_name: str, arguments: Optional[Dict[str, Any]]) -> str:
         return f"open `{args.get('target', '?')}`"
     if tool_name == "play_media":
         return f"play `{args.get('target', '?')}` in mpv"
+    if tool_name == "start_task":
+        steps = args.get("steps") or []
+        lines = [f"start a {len(steps)}-step task: {args.get('goal', '?')}"]
+        lines += [f"       {i}) {s}" for i, s in enumerate(steps, 1)]
+        return "\n".join(lines)
     rendered = ", ".join(f"{k}={v!r}" for k, v in args.items())
     return f"{tool_name}({rendered})"

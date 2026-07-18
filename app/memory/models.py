@@ -140,6 +140,45 @@ class Notification(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
 
 
+class Plan(Base):
+    """A task-mode plan: a user-approved goal FRIDAY executes step by step.
+
+    status: active → (completed | cancelled), or blocked while a failed step
+    waits for the user to say skip/retry/cancel. Persisted so a restart
+    resumes the plan instead of forgetting it.
+    """
+    __tablename__ = "plans"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    goal: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(50), default="active", index=True)
+    result: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # verification verdict
+    conversation_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    steps: Mapped[List["PlanStep"]] = relationship(
+        back_populates="plan", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class PlanStep(Base):
+    """One ordered step of a Plan. status: pending → running → done,
+    or failed (blocks the plan) / skipped (user's call)."""
+    __tablename__ = "plan_steps"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    plan_id: Mapped[int] = mapped_column(ForeignKey("plans.id", ondelete="CASCADE"))
+    seq: Mapped[int] = mapped_column(Integer)
+    description: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(50), default="pending", index=True)
+    result: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+    plan: Mapped["Plan"] = relationship(back_populates="steps")
+
+
 # ── Phase 2.5: Core Infrastructure Models ────────────────────────────
 
 class EventStore(Base):
