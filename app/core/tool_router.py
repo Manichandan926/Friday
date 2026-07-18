@@ -46,12 +46,14 @@ GROUPS: Dict[str, Tuple[Tuple[str, ...], FrozenSet[str]]] = {
          "completed", "done", "pending", "overdue", "productivity",
          "schedule", "plan", "step", "steps", "goal", "then", "cancel",
          "continue", "resume", "status", "skip", "retry", "set up",
-         "workflow"),
+         "workflow", "routine", "routines", "every", "daily", "morning",
+         "automatically", "automatic", "unattended"),
         frozenset({
             "get_tasks", "add_task", "complete_task", "get_deadlines",
             "set_reminder", "get_projects", "add_project",
             "analyze_productivity", "start_task", "get_task_status",
-            "update_task_step", "cancel_task",
+            "update_task_step", "cancel_task", "add_routine",
+            "list_routines", "update_routine",
         }),
     ),
     "career": (

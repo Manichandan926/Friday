@@ -140,6 +140,29 @@ class Notification(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
 
 
+class Routine(Base):
+    """A standing autonomous behavior: an instruction FRIDAY runs unattended
+    on a schedule (daily at a wall-clock time, or every N minutes).
+
+    Creation is CONFIRM-gated; runs execute with nothing approved, so the
+    tier gate limits them to AUTO tools. Times are LOCAL wall clock — a
+    routine is a "8am my time" concept, unlike task due_dates (naive UTC);
+    the table is self-contained, so the two clocks never get compared.
+    """
+    __tablename__ = "routines"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+    instruction: Mapped[str] = mapped_column(Text)
+    schedule_type: Mapped[str] = mapped_column(String(20))  # daily | interval
+    time_of_day: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)   # "HH:MM" local
+    interval_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # local naive
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+
+
 class Plan(Base):
     """A task-mode plan: a user-approved goal FRIDAY executes step by step.
 

@@ -57,6 +57,12 @@ TOOL_TIERS: Dict[str, Tier] = {
     # analytics — read-only aggregates over our own data
     "analyze_productivity": Tier.AUTO,
     "forecast_token_usage": Tier.AUTO,
+    # routines — creating a standing unattended behavior gets one explicit
+    # yes; runs themselves execute with nothing approved, so the gate holds
+    # them to AUTO tools. Stopping/removing autonomy is always safe.
+    "add_routine": Tier.CONFIRM,
+    "list_routines": Tier.AUTO,
+    "update_routine": Tier.AUTO,
     # task mode — the plan itself is the approval surface: one "yes" on
     # start_task launches autonomous execution, but every step's tool calls
     # still pass this same tier gate individually.
@@ -194,6 +200,12 @@ def describe_call(tool_name: str, arguments: Optional[Dict[str, Any]]) -> str:
         return f"open `{args.get('target', '?')}`"
     if tool_name == "play_media":
         return f"play `{args.get('target', '?')}` in mpv"
+    if tool_name == "add_routine":
+        when = (f"every day at {args.get('time_of_day', '?')}"
+                if args.get("schedule_type") == "daily"
+                else f"every {args.get('interval_minutes', '?')} minutes")
+        return (f"create the routine '{args.get('name', '?')}' — runs {when}, "
+                f"unattended: {args.get('instruction', '?')}")
     if tool_name == "start_task":
         steps = args.get("steps") or []
         lines = [f"start a {len(steps)}-step task: {args.get('goal', '?')}"]

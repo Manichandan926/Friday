@@ -17,10 +17,11 @@ import os
 from app.memory.memory_manager import MemoryManager
 
 # Daily token budget the forecast measures against. Default matches Groq's
-# free tier for llama-4-scout (500k TPD per console.groq.com/docs/rate-limits,
-# checked 2026-07-17) — the provider+model we ship on. Override via env when
-# the model or plan changes: FRIDAY_DAILY_TOKEN_LIMIT=100000.
-DEFAULT_DAILY_TOKEN_LIMIT = int(os.getenv("FRIDAY_DAILY_TOKEN_LIMIT", "500000"))
+# free tier for llama-3.3-70b-versatile (100k TPD per
+# console.groq.com/docs/rate-limits, checked 2026-07-18 — llama-4-scout and
+# its 500k TPD were removed from the free lineup). Override via env when the
+# model or plan changes: FRIDAY_DAILY_TOKEN_LIMIT=500000.
+DEFAULT_DAILY_TOKEN_LIMIT = int(os.getenv("FRIDAY_DAILY_TOKEN_LIMIT", "100000"))
 DEFAULT_FORECAST_PROVIDER = "Groq"
 
 
