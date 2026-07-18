@@ -147,9 +147,105 @@ def _search_knowledge(query: str) -> str:
     results = MemoryManager.search_knowledge(query)
     if not results:
         return f"No knowledge vault entries match '{query}'."
-    lines = [f"{len(results)} match(es) for '{query}':"]
+    lines = [f"{len(results)} match(es) for '{query}' (most relevant first):"]
     for r in results:
-        lines.append(f"- [{r.category}] {r.title}: {r.content[:200]}")
+        tagpart = f" #{r.tags}" if r.tags else ""
+        lines.append(f"- (#{r.id}) [{r.category}] {r.title}: {r.content[:200]}{tagpart}")
+    return "\n".join(lines)
+
+
+@_register(
+    "list_knowledge_topics",
+    "Show the knowledge vault's shape: every category and every tag with how "
+    "many notes each holds. Use to discover what's saved before searching.",
+)
+def _list_knowledge_topics() -> str:
+    cats = MemoryManager.list_knowledge_categories()
+    tags = MemoryManager.list_knowledge_tags()
+    if not cats:
+        return "Knowledge vault is empty."
+    lines = ["Categories:"]
+    lines += [f"  - {c} ({n})" for c, n in cats]
+    lines.append("Tags:" if tags else "Tags: (none)")
+    lines += [f"  - #{t} ({n})" for t, n in tags]
+    return "\n".join(lines)
+
+
+@_register(
+    "browse_knowledge",
+    "List saved notes filtered by category and/or tag (exact match). Omit both "
+    "to list the whole vault. Use list_knowledge_topics first to see the "
+    "available categories/tags; use search_knowledge for free-text queries.",
+    params={
+        "category": {"type": "string", "description": "e.g. aws, dsa, ai, career."},
+        "tag": {"type": "string", "description": "A single exact tag, e.g. 'nosql'."},
+    },
+)
+def _browse_knowledge(category: str = None, tag: str = None) -> str:
+    if tag:
+        items = MemoryManager.get_knowledge_by_tag(tag)
+        if category:
+            from app.core.knowledge import normalize_category
+            want = normalize_category(category)
+            items = [it for it in items if it.category == want]
+    else:
+        items = MemoryManager.get_knowledge_items(category=category)
+    scope = " ".join(
+        p for p in (f"category={category}" if category else "",
+                    f"tag={tag}" if tag else "") if p
+    ) or "whole vault"
+    if not items:
+        return f"No knowledge vault entries for {scope}."
+    lines = [f"{len(items)} note(s) — {scope}:"]
+    for it in items:
+        tagpart = f" #{it.tags}" if it.tags else ""
+        lines.append(f"- (#{it.id}) [{it.category}] {it.title}: {it.content[:160]}{tagpart}")
+    return "\n".join(lines)
+
+
+@_register(
+    "link_knowledge",
+    "Connect two saved notes in the knowledge graph (get their ids from "
+    "search_knowledge / browse_knowledge). relation is a short label like "
+    "'related', 'prerequisite', or 'part_of'.",
+    params={
+        "source_id": {"type": "integer", "description": "Note the link starts from."},
+        "target_id": {"type": "integer", "description": "Note the link points to."},
+        "relation": {"type": "string", "description": "Edge label (default 'related')."},
+    },
+    required=["source_id", "target_id"],
+)
+def _link_knowledge(source_id: int, target_id: int, relation: str = "related") -> str:
+    link = MemoryManager.add_knowledge_link(source_id, target_id, relation)
+    if link is None:
+        return ("Couldn't link: a note can't link to itself, and both ids must "
+                "exist (check with search_knowledge/browse_knowledge).")
+    return f"Linked note #{source_id} —{link.relation}→ #{target_id}."
+
+
+@_register(
+    "get_related_knowledge",
+    "Show notes connected to a given note: explicit graph links first, then "
+    "notes the search index finds similar. Get the id from search_knowledge.",
+    params={"item_id": {"type": "integer", "description": "The note's id."}},
+    required=["item_id"],
+)
+def _get_related_knowledge(item_id: int) -> str:
+    links = MemoryManager.get_knowledge_links(item_id)
+    suggested = MemoryManager.suggest_related_knowledge(item_id)
+    linked_ids = {other.id for other, _rel, _dir in links}
+    suggested = [s for s in suggested if s.id not in linked_ids]
+    if not links and not suggested:
+        return f"Note #{item_id} has no links yet and nothing similar was found."
+    lines = [f"Related to note #{item_id}:"]
+    if links:
+        lines.append("Linked:")
+        for other, rel, direction in links:
+            lines.append(f"  {direction} (#{other.id}) [{other.category}] {other.title} ({rel})")
+    if suggested:
+        lines.append("Similar (by content):")
+        for s in suggested:
+            lines.append(f"  ~ (#{s.id}) [{s.category}] {s.title}")
     return "\n".join(lines)
 
 
@@ -274,7 +370,7 @@ def _remember_fact(category: str, content: str) -> str:
     "Save a note to the knowledge vault (study notes, snippets, references).",
     params={
         "title": {"type": "string"},
-        "category": {"type": "string", "description": "e.g. aws, dsa, interviews."},
+        "category": {"type": "string", "description": "Prefer one of: aws, dsa, ai, projects, research, career (else a short lowercase label)."},
         "content": {"type": "string", "description": "Note body."},
         "tags": {"type": "string", "description": "Optional comma-separated tags."},
     },

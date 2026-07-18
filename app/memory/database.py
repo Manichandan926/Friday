@@ -49,12 +49,65 @@ def _migrate() -> None:
                 logger.info(f"Migrating: adding conversations.{column}")
                 conn.execute(text(ddl))
 
+def ensure_knowledge_fts() -> None:
+    """Create the FTS5 full-text index over knowledge_items (+ triggers that
+    keep it in sync), and backfill existing rows, if it isn't there yet.
+
+    Idempotent: does nothing once the index exists. Degrades gracefully — if
+    this SQLite build lacks the FTS5 module, we log and skip, and
+    MemoryManager.search_knowledge falls back to a LIKE substring search.
+    Kept out of Base.metadata deliberately: an FTS5 virtual table + triggers is
+    raw SQLite DDL SQLAlchemy's create_all() doesn't model. tags can be NULL,
+    so every read of it is COALESCE'd to '' to keep the index consistent
+    (a mismatch between insert/delete values corrupts an external-content FTS).
+    """
+    from sqlalchemy import inspect, text
+
+    if not str(engine.url).startswith("sqlite"):
+        return
+    if "knowledge_items" not in inspect(engine).get_table_names():
+        return
+    with engine.begin() as conn:
+        already = conn.execute(text(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_fts'"
+        )).first()
+        if already:
+            return
+        try:
+            conn.execute(text(
+                "CREATE VIRTUAL TABLE knowledge_fts USING fts5("
+                "title, content, tags, content='knowledge_items', content_rowid='id')"
+            ))
+        except Exception as e:  # FTS5 module missing in this SQLite build
+            logger.warning(f"FTS5 unavailable — knowledge search will use LIKE fallback: {e}")
+            return
+        conn.execute(text(
+            "CREATE TRIGGER knowledge_fts_ai AFTER INSERT ON knowledge_items BEGIN "
+            "INSERT INTO knowledge_fts(rowid, title, content, tags) "
+            "VALUES (new.id, new.title, new.content, COALESCE(new.tags,'')); END"))
+        conn.execute(text(
+            "CREATE TRIGGER knowledge_fts_ad AFTER DELETE ON knowledge_items BEGIN "
+            "INSERT INTO knowledge_fts(knowledge_fts, rowid, title, content, tags) "
+            "VALUES('delete', old.id, old.title, old.content, COALESCE(old.tags,'')); END"))
+        conn.execute(text(
+            "CREATE TRIGGER knowledge_fts_au AFTER UPDATE ON knowledge_items BEGIN "
+            "INSERT INTO knowledge_fts(knowledge_fts, rowid, title, content, tags) "
+            "VALUES('delete', old.id, old.title, old.content, COALESCE(old.tags,'')); "
+            "INSERT INTO knowledge_fts(rowid, title, content, tags) "
+            "VALUES (new.id, new.title, new.content, COALESCE(new.tags,'')); END"))
+        conn.execute(text(
+            "INSERT INTO knowledge_fts(rowid, title, content, tags) "
+            "SELECT id, title, content, COALESCE(tags,'') FROM knowledge_items"))
+        logger.info("Created knowledge_fts FTS5 index + sync triggers.")
+
+
 def init_db() -> None:
     """Create DB schema."""
     try:
         logger.info("Initializing SQLite database...")
         Base.metadata.create_all(bind=engine)
         _migrate()
+        ensure_knowledge_fts()
         logger.info("Database tables verified/created successfully.")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")

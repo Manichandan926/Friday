@@ -1,8 +1,10 @@
+import re
 from datetime import datetime
 from typing import List, Optional
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, text
+from sqlalchemy.exc import OperationalError, DatabaseError
 from app.memory.database import get_db_session
-from app.memory.models import Conversation, Message, MemoryItem, Email, Task, Application, KnowledgeItem, Project, Notification, Plan, PlanStep, Routine, UsageRecord
+from app.memory.models import Conversation, Message, MemoryItem, Email, Task, Application, KnowledgeItem, KnowledgeLink, Project, Notification, Plan, PlanStep, Routine, UsageRecord
 
 class MemoryManager:
     # --- Conversations ---
@@ -229,9 +231,11 @@ class MemoryManager:
     @staticmethod
     def add_knowledge_item(title: str, category: str, content: str,
                            tags: Optional[str] = None) -> KnowledgeItem:
+        from app.core.knowledge import normalize_category, normalize_tags
         with get_db_session() as session:
             item = KnowledgeItem(
-                title=title, category=category, content=content, tags=tags
+                title=title, category=normalize_category(category),
+                content=content, tags=normalize_tags(tags),
             )
             session.add(item)
             session.flush()
@@ -239,21 +243,88 @@ class MemoryManager:
 
     @staticmethod
     def get_knowledge_items(category: Optional[str] = None) -> List[KnowledgeItem]:
+        from app.core.knowledge import normalize_category
         with get_db_session() as session:
             stmt = select(KnowledgeItem)
             if category:
-                stmt = stmt.where(KnowledgeItem.category == category)
+                stmt = stmt.where(KnowledgeItem.category == normalize_category(category))
             stmt = stmt.order_by(KnowledgeItem.created_at.desc())
             return list(session.scalars(stmt).all())
 
     @staticmethod
-    def search_knowledge(query: str) -> List[KnowledgeItem]:
-        """Simple substring search across title, content, and tags."""
+    def list_knowledge_categories() -> List[tuple]:
+        """(category, count) pairs, most-populated first — the vault's shape."""
         with get_db_session() as session:
+            rows = session.execute(
+                select(KnowledgeItem.category, func.count(KnowledgeItem.id))
+                .group_by(KnowledgeItem.category)
+                .order_by(func.count(KnowledgeItem.id).desc())
+            ).all()
+            return [(cat, n) for cat, n in rows]
+
+    @staticmethod
+    def list_knowledge_tags() -> List[tuple]:
+        """(tag, count) pairs across the vault, most-used first. Tags live as a
+        comma-separated string per item, so they're split and tallied here."""
+        from app.core.knowledge import split_tags
+        counts: dict = {}
+        with get_db_session() as session:
+            for (raw,) in session.execute(select(KnowledgeItem.tags)).all():
+                for tag in split_tags(raw):
+                    counts[tag] = counts.get(tag, 0) + 1
+        return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+    @staticmethod
+    def get_knowledge_by_tag(tag: str) -> List[KnowledgeItem]:
+        """Items carrying an exact tag (case-insensitive, whole-tag — 'sql'
+        does not match a 'nosql' tag). Filtered in Python for exact membership
+        rather than a LIKE that would match substrings of other tags."""
+        from app.core.knowledge import split_tags, normalize_tags
+        want = normalize_tags(tag)
+        if not want:
+            return []
+        with get_db_session() as session:
+            items = session.scalars(
+                select(KnowledgeItem).order_by(KnowledgeItem.created_at.desc())
+            ).all()
+            return [it for it in items if want in split_tags(it.tags)]
+
+    @staticmethod
+    def search_knowledge(query: str) -> List[KnowledgeItem]:
+        """Full-text search across title, content, and tags, BM25-ranked
+        (most relevant first) via the SQLite FTS5 index. Terms are prefix-
+        matched and OR-combined for recall (a search for 'sql graph' finds
+        notes mentioning either). Falls back to a LIKE substring search when
+        FTS5 is unavailable or the query has no indexable terms."""
+        q = (query or "").strip()
+        if not q:
+            return []
+        with get_db_session() as session:
+            terms = re.findall(r"\w+", q)
+            if terms:
+                # Quote each term (so punctuation can't inject FTS operators) and
+                # prefix-match it; OR them together.
+                match_expr = " OR ".join(f'"{t}"*' for t in terms)
+                try:
+                    rows = session.execute(
+                        text("SELECT ki.id FROM knowledge_items ki "
+                             "JOIN knowledge_fts f ON f.rowid = ki.id "
+                             "WHERE knowledge_fts MATCH :expr "
+                             "ORDER BY bm25(knowledge_fts)"),
+                        {"expr": match_expr},
+                    ).all()
+                    ids = [r[0] for r in rows]
+                    if not ids:
+                        return []
+                    by_id = {it.id: it for it in session.scalars(
+                        select(KnowledgeItem).where(KnowledgeItem.id.in_(ids)))}
+                    return [by_id[i] for i in ids if i in by_id]  # preserve rank
+                except (OperationalError, DatabaseError):
+                    pass  # no FTS index / FTS5 unavailable → LIKE fallback below
             stmt = select(KnowledgeItem).where(
-                KnowledgeItem.title.ilike(f"%{query}%") |
-                KnowledgeItem.content.ilike(f"%{query}%") |
-                KnowledgeItem.tags.ilike(f"%{query}%")
+                KnowledgeItem.title.ilike(f"%{q}%") |
+                KnowledgeItem.content.ilike(f"%{q}%") |
+                KnowledgeItem.tags.ilike(f"%{q}%")
             )
             return list(session.scalars(stmt).all())
 
@@ -262,9 +333,68 @@ class MemoryManager:
         with get_db_session() as session:
             item = session.scalar(select(KnowledgeItem).where(KnowledgeItem.id == item_id))
             if item:
+                # prune graph edges touching this note (FK enforcement is off)
+                session.execute(delete(KnowledgeLink).where(
+                    (KnowledgeLink.source_id == item_id) |
+                    (KnowledgeLink.target_id == item_id)))
                 session.delete(item)
                 return True
             return False
+
+    # --- Knowledge graph (edges between notes) ---
+
+    @staticmethod
+    def add_knowledge_link(source_id: int, target_id: int,
+                           relation: str = "related") -> Optional[KnowledgeLink]:
+        """Link two existing notes. Refuses self-links and missing endpoints;
+        an identical edge is returned rather than duplicated (idempotent)."""
+        if source_id == target_id:
+            return None
+        rel = (relation or "related").strip().lower() or "related"
+        with get_db_session() as session:
+            if not session.get(KnowledgeItem, source_id) or not session.get(KnowledgeItem, target_id):
+                return None
+            existing = session.scalar(select(KnowledgeLink).where(
+                KnowledgeLink.source_id == source_id,
+                KnowledgeLink.target_id == target_id,
+                KnowledgeLink.relation == rel))
+            if existing:
+                return existing
+            link = KnowledgeLink(source_id=source_id, target_id=target_id, relation=rel)
+            session.add(link)
+            session.flush()
+            return link
+
+    @staticmethod
+    def get_knowledge_links(item_id: int) -> List[tuple]:
+        """Explicit neighbors of a note as (KnowledgeItem, relation, direction)
+        — both outgoing ('→') and incoming ('←'); dangling edges are skipped."""
+        with get_db_session() as session:
+            if not session.get(KnowledgeItem, item_id):
+                return []
+            edges = session.scalars(select(KnowledgeLink).where(
+                (KnowledgeLink.source_id == item_id) |
+                (KnowledgeLink.target_id == item_id))).all()
+            out = []
+            for e in edges:
+                outgoing = e.source_id == item_id
+                other = session.get(KnowledgeItem, e.target_id if outgoing else e.source_id)
+                if other:
+                    out.append((other, e.relation, "→" if outgoing else "←"))
+            return out
+
+    @staticmethod
+    def suggest_related_knowledge(item_id: int, limit: int = 5) -> List[KnowledgeItem]:
+        """Notes the FTS index finds similar to this one (by its title + tags),
+        excluding itself — the graph's automatic edges, no manual linking
+        needed."""
+        with get_db_session() as session:
+            item = session.get(KnowledgeItem, item_id)
+            if not item:
+                return []
+            seed = f"{item.title} {item.tags or ''}"
+        hits = MemoryManager.search_knowledge(seed)
+        return [h for h in hits if h.id != item_id][:max(1, limit)]
 
     # --- Projects ---
 
