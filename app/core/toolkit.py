@@ -498,7 +498,7 @@ def _write_file(path: str, content: str) -> str:
 _SECRET_DIR_PARTS = {".ssh", ".gnupg", ".aws", ".kube", ".password-store"}
 _SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".kdbx")
 _SECRET_BASENAMES = (
-    ".env", ".netrc", ".git-credentials", ".pgpass", ".npmrc", ".pypirc",
+    ".env", ".envrc", ".netrc", ".git-credentials", ".pgpass", ".npmrc", ".pypirc",
     "id_rsa", "id_ed25519", "id_ecdsa", "credentials",
 )
 

@@ -112,6 +112,53 @@ def has_command_chaining(command: str) -> bool:
     return any(tok in command for tok in _CHAINING_TOKENS)
 
 
+# Several whitelisted "read-only" commands are actually programmable engines
+# that can delete, write, or execute WITHOUT a separate command token the
+# whitelist/tier logic could catch:
+#   * find … -delete / -exec / -execdir / -ok / -fprintf / -fls  (delete, run, write)
+#   * awk 'BEGIN{system("…")}' or `… | "sh"` or `"cmd" | getline`  (arbitrary exec)
+#   * sed -i / --in-place, or the e/w/W/r/R script commands         (overwrite, run, write)
+#   * a bare system(...) call embedded anywhere
+# Their base token (find/awk/sed) is whitelisted, so without this they tier as
+# AUTO and run unattended. Refuse the whole command — same fail-closed stance as
+# substitution/chaining; legitimate edits go through the CONFIRM-gated,
+# home-fenced write_file/edit_file tools instead.
+_EFFECTFUL_PATTERNS = [
+    r"\bfind\b[^|]*\s-(delete|exec|execdir|ok|okdir|fprintf?|fls|fprint0)\b",
+    r"\b[gm]?awk\b[^|]*(system\s*\(|\|\s*[\"']|[\"']\s*\|\s*getline)",
+    r"\b[gs]?sed\b[^|]*(\s-i\b|--in-place)",
+    r"\b[gs]?sed\b[^|]*['\"][0-9,$ ]*[ewWrR]\s+\S",
+    r"\bsystem\s*\(",
+]
+
+# Credential-bearing paths must never be read through the shell either — the
+# read_file tool refuses these, but cat/head/tail/strings/… are AUTO and would
+# otherwise be an exfil path (read a key, smuggle it out via fetch_url). This
+# mirrors _secret_reason() in toolkit.py; keep the two in sync.
+_SECRET_READ_PATTERNS = [
+    r"\.ssh\b", r"\.gnupg\b", r"\.aws\b", r"\.kube\b", r"\.password-store\b",
+    r"\bid_(rsa|ed25519|ecdsa)\b", r"\.env(rc)?\b", r"\.netrc\b", r"\.pgpass\b",
+    r"\.git-credentials\b", r"\.(pem|key|p12|pfx|kdbx)\b", r"\bcredentials\b",
+]
+
+
+# Compiled once into a single alternation each, so the hot path does one regex
+# pass rather than a dozen — keeps these guards off the native fast-path's back.
+_EFFECTFUL_RE = re.compile("|".join(_EFFECTFUL_PATTERNS), re.IGNORECASE)
+_SECRET_READ_RE = re.compile("|".join(_SECRET_READ_PATTERNS), re.IGNORECASE)
+
+
+def has_effectful_toolflag(command: str) -> bool:
+    """True if a whitelisted command smuggles a delete/write/exec via its own
+    flags or scripting (find -delete, awk system(), sed -i/e/w, …)."""
+    return _EFFECTFUL_RE.search(command) is not None
+
+
+def reads_credential_path(command: str) -> bool:
+    """True if the command references a credential-shaped path (never read those)."""
+    return _SECRET_READ_RE.search(command) is not None
+
+
 def is_command_safe(command: str) -> Tuple[bool, str]:
     """
     Validate if a shell command is safe to execute.
@@ -135,6 +182,16 @@ def is_command_safe(command: str) -> Tuple[bool, str]:
     # too, so nothing looser can wave it through.
     if has_command_chaining(command):
         return False, "Blocked: chaining commands with ; & or newlines is not allowed."
+
+    # Refuse programmable-command escapes (find -delete, awk system(), sed -i/e/w,
+    # …) and credential reads BEFORE the native validator too — the base token is
+    # whitelisted, so only these dedicated checks can catch the real effect.
+    if has_effectful_toolflag(command):
+        return False, ("Blocked: this command can delete, write, or execute via its "
+                       "own flags/scripting — use the write_file/edit_file tools for edits.")
+    if reads_credential_path(command):
+        return False, ("Blocked: refusing to read a credential-shaped path through the "
+                       "shell (keys/.env/.ssh/…). FRIDAY never reads credential files.")
 
     # try native C validator first (binary search + strstr, no regex)
     try:
