@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List, Optional
 from sqlalchemy import func, select
 from app.memory.database import get_db_session
-from app.memory.models import Conversation, Message, MemoryItem, Email, Task, Application, KnowledgeItem, Project, Notification, UsageRecord
+from app.memory.models import Conversation, Message, MemoryItem, Email, Task, Application, KnowledgeItem, Project, Notification, Plan, PlanStep, UsageRecord
 
 class MemoryManager:
     # --- Conversations ---
@@ -404,6 +404,78 @@ class MemoryManager:
                 stmt = stmt.where(func.lower(UsageRecord.provider) == provider.lower())
             tin, tout, calls = session.execute(stmt).one()
             return int(tin), int(tout), int(calls)
+
+    # --- Task-mode plans ---
+
+    @staticmethod
+    def create_plan(goal: str, steps: List[str],
+                    conversation_id: Optional[int] = None) -> Plan:
+        with get_db_session() as session:
+            plan = Plan(goal=goal, conversation_id=conversation_id)
+            session.add(plan)
+            session.flush()
+            for i, desc in enumerate(steps, 1):
+                session.add(PlanStep(plan_id=plan.id, seq=i, description=desc))
+            session.flush()
+            return plan
+
+    @staticmethod
+    def get_plan(plan_id: int) -> Optional[Plan]:
+        with get_db_session() as session:
+            return session.get(Plan, plan_id)
+
+    @staticmethod
+    def get_open_plan() -> Optional[Plan]:
+        """The single in-flight plan (active, or blocked on a failed step)."""
+        with get_db_session() as session:
+            return session.scalars(
+                select(Plan).where(Plan.status.in_(("active", "blocked")))
+                .order_by(Plan.id.desc())
+            ).first()
+
+    @staticmethod
+    def get_latest_plan() -> Optional[Plan]:
+        with get_db_session() as session:
+            return session.scalars(select(Plan).order_by(Plan.id.desc())).first()
+
+    @staticmethod
+    def get_plan_steps(plan_id: int) -> List[PlanStep]:
+        with get_db_session() as session:
+            return list(session.scalars(
+                select(PlanStep).where(PlanStep.plan_id == plan_id)
+                .order_by(PlanStep.seq)
+            ).all())
+
+    @staticmethod
+    def get_plan_step(step_id: int) -> Optional[PlanStep]:
+        with get_db_session() as session:
+            return session.get(PlanStep, step_id)
+
+    @staticmethod
+    def update_plan_step(step_id: int, status: str,
+                         result: Optional[str] = None) -> Optional[PlanStep]:
+        with get_db_session() as session:
+            step = session.get(PlanStep, step_id)
+            if step is None:
+                return None
+            step.status = status
+            if result is not None:
+                step.result = result
+            session.flush()
+            return step
+
+    @staticmethod
+    def set_plan_status(plan_id: int, status: str,
+                        result: Optional[str] = None) -> Optional[Plan]:
+        with get_db_session() as session:
+            plan = session.get(Plan, plan_id)
+            if plan is None:
+                return None
+            plan.status = status
+            if result is not None:
+                plan.result = result
+            session.flush()
+            return plan
 
     # --- Notifications ---
 

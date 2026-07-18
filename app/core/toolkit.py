@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from app.core import analytics, desktop, tiers, tools as data_tools, vision, web
+from app.core import analytics, desktop, task_engine, tiers, tools as data_tools, vision, web
 from app.core.logger import logger
 from app.core.tiers import Tier
 from app.llm.types import ToolSpec
@@ -273,6 +273,87 @@ def _add_application(company: str, role: str, status: str = "applied", deadline:
         deadline=_parse_date(deadline, "deadline"),
     )
     return f"Application tracked: {company} — {role} ({status})."
+
+
+# ── task mode (plan → execute → verify) ──────────────────
+
+@_register(
+    "start_task",
+    "Begin a multi-step task: give the goal and an ordered list of concrete "
+    "steps. Once the user approves the plan, FRIDAY executes the steps itself "
+    "tool by tool (risky steps still ask first) and verifies the result at the "
+    "end. Use for jobs needing several actions — not for a single tool call.",
+    params={
+        "goal": {"type": "string",
+                 "description": "One sentence: what the finished task achieves."},
+        "steps": {
+            "type": "array", "items": {"type": "string"},
+            "description": f"Ordered concrete steps (max {task_engine.MAX_PLAN_STEPS}), "
+                           "each doable with the available tools.",
+        },
+    },
+    required=["goal", "steps"],
+)
+def _start_task(goal: str, steps: list = None) -> str:
+    cleaned = [s.strip() for s in (steps or []) if isinstance(s, str) and s.strip()]
+    if not goal or not goal.strip():
+        raise ValueError("goal must be a non-empty sentence")
+    if not cleaned:
+        raise ValueError("steps must be a non-empty list of step descriptions")
+    if len(cleaned) > task_engine.MAX_PLAN_STEPS:
+        raise ValueError(
+            f"too many steps ({len(cleaned)}); cap the plan at "
+            f"{task_engine.MAX_PLAN_STEPS} or split the job"
+        )
+    if MemoryManager.get_open_plan() is not None:
+        return ("A task is already in progress — check get_task_status, and "
+                "cancel it first if this new task should replace it.")
+    plan = MemoryManager.create_plan(goal.strip(), cleaned)
+    return (f"Task {plan.id} started: {plan.goal} ({len(cleaned)} steps queued). "
+            "Execution begins now.")
+
+
+@_register(
+    "get_task_status",
+    "Progress of the current multi-step task: goal and per-step status.",
+)
+def _get_task_status() -> str:
+    return task_engine.render_status()
+
+
+@_register(
+    "update_task_step",
+    "Skip or retry one step of the current task — e.g. after a blocked step, "
+    "when the user says to skip it or try again.",
+    params={
+        "step_id": {"type": "integer",
+                    "description": "The step id (shown when a step blocks)."},
+        "action": {"type": "string", "enum": ["skip", "retry"]},
+    },
+    required=["step_id", "action"],
+)
+def _update_task_step(step_id: int, action: str) -> str:
+    step = MemoryManager.get_plan_step(step_id)
+    if step is None:
+        return f"No step with id {step_id}."
+    MemoryManager.update_plan_step(step_id, "skipped" if action == "skip" else "pending")
+    plan = MemoryManager.get_plan(step.plan_id)
+    if plan is not None and plan.status == "blocked":
+        MemoryManager.set_plan_status(plan.id, "active")
+    verb = "skipped" if action == "skip" else "queued to retry"
+    return f"Step {step.seq} {verb}; the task will continue."
+
+
+@_register(
+    "cancel_task",
+    "Cancel the current multi-step task; remaining steps won't run.",
+)
+def _cancel_task() -> str:
+    plan = MemoryManager.get_open_plan()
+    if plan is None:
+        return "No task is in progress."
+    MemoryManager.set_plan_status(plan.id, "cancelled")
+    return f"Task cancelled: {plan.goal}"
 
 
 # ── filesystem writes (Tier 2: require approval) ─────────
