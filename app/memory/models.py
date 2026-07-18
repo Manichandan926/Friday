@@ -99,6 +99,22 @@ class KnowledgeItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
+class KnowledgeLink(Base):
+    """A directed edge between two knowledge_items — the vault's graph layer.
+
+    Kept deliberately thin (an edge list, not a graph DB): a relation label
+    ('related', 'prerequisite', 'part_of', …) and the two endpoint ids. FK
+    enforcement is off in SQLite here, so delete_knowledge_item prunes edges
+    touching a removed note; queries also skip edges whose endpoint is gone.
+    """
+    __tablename__ = "knowledge_links"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    source_id: Mapped[int] = mapped_column(Integer, index=True)
+    target_id: Mapped[int] = mapped_column(Integer, index=True)
+    relation: Mapped[str] = mapped_column(String(100), default="related")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+
 class Project(Base):
     """Project tracking with milestones and progress."""
     __tablename__ = "projects"

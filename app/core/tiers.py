@@ -49,6 +49,7 @@ TOOL_TIERS: Dict[str, Tier] = {
     "search_knowledge": Tier.AUTO,
     "list_knowledge_topics": Tier.AUTO,
     "browse_knowledge": Tier.AUTO,
+    "get_related_knowledge": Tier.AUTO,
     "get_projects": Tier.AUTO,
     "get_notifications": Tier.AUTO,
     # web reads — outbound network, but read-only and non-destructive. See the
@@ -77,6 +78,7 @@ TOOL_TIERS: Dict[str, Tier] = {
     "complete_task": Tier.AUTO,
     "remember_fact": Tier.AUTO,
     "save_knowledge": Tier.AUTO,
+    "link_knowledge": Tier.AUTO,
     "add_project": Tier.AUTO,
     "add_application": Tier.AUTO,
     # file watching — passive observation via the native watcher daemon

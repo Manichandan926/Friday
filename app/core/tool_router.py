@@ -70,10 +70,12 @@ GROUPS: Dict[str, Tuple[Tuple[str, ...], FrozenSet[str]]] = {
          "notes", "fact", "facts", "learn", "learned", "memory",
          "notification", "notifications", "alert", "alerts",
          "tag", "tags", "tagged", "category", "categories", "topic",
-         "topics", "vault", "browse"),
+         "topics", "vault", "browse", "link", "linked", "related",
+         "connect", "graph"),
         frozenset({
             "get_knowledge", "search_knowledge", "save_knowledge",
             "list_knowledge_topics", "browse_knowledge",
+            "link_knowledge", "get_related_knowledge",
             "remember_fact", "get_notifications",
         }),
     ),

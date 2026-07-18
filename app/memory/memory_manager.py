@@ -1,10 +1,10 @@
 import re
 from datetime import datetime
 from typing import List, Optional
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import OperationalError, DatabaseError
 from app.memory.database import get_db_session
-from app.memory.models import Conversation, Message, MemoryItem, Email, Task, Application, KnowledgeItem, Project, Notification, Plan, PlanStep, Routine, UsageRecord
+from app.memory.models import Conversation, Message, MemoryItem, Email, Task, Application, KnowledgeItem, KnowledgeLink, Project, Notification, Plan, PlanStep, Routine, UsageRecord
 
 class MemoryManager:
     # --- Conversations ---
@@ -333,9 +333,68 @@ class MemoryManager:
         with get_db_session() as session:
             item = session.scalar(select(KnowledgeItem).where(KnowledgeItem.id == item_id))
             if item:
+                # prune graph edges touching this note (FK enforcement is off)
+                session.execute(delete(KnowledgeLink).where(
+                    (KnowledgeLink.source_id == item_id) |
+                    (KnowledgeLink.target_id == item_id)))
                 session.delete(item)
                 return True
             return False
+
+    # --- Knowledge graph (edges between notes) ---
+
+    @staticmethod
+    def add_knowledge_link(source_id: int, target_id: int,
+                           relation: str = "related") -> Optional[KnowledgeLink]:
+        """Link two existing notes. Refuses self-links and missing endpoints;
+        an identical edge is returned rather than duplicated (idempotent)."""
+        if source_id == target_id:
+            return None
+        rel = (relation or "related").strip().lower() or "related"
+        with get_db_session() as session:
+            if not session.get(KnowledgeItem, source_id) or not session.get(KnowledgeItem, target_id):
+                return None
+            existing = session.scalar(select(KnowledgeLink).where(
+                KnowledgeLink.source_id == source_id,
+                KnowledgeLink.target_id == target_id,
+                KnowledgeLink.relation == rel))
+            if existing:
+                return existing
+            link = KnowledgeLink(source_id=source_id, target_id=target_id, relation=rel)
+            session.add(link)
+            session.flush()
+            return link
+
+    @staticmethod
+    def get_knowledge_links(item_id: int) -> List[tuple]:
+        """Explicit neighbors of a note as (KnowledgeItem, relation, direction)
+        — both outgoing ('→') and incoming ('←'); dangling edges are skipped."""
+        with get_db_session() as session:
+            if not session.get(KnowledgeItem, item_id):
+                return []
+            edges = session.scalars(select(KnowledgeLink).where(
+                (KnowledgeLink.source_id == item_id) |
+                (KnowledgeLink.target_id == item_id))).all()
+            out = []
+            for e in edges:
+                outgoing = e.source_id == item_id
+                other = session.get(KnowledgeItem, e.target_id if outgoing else e.source_id)
+                if other:
+                    out.append((other, e.relation, "→" if outgoing else "←"))
+            return out
+
+    @staticmethod
+    def suggest_related_knowledge(item_id: int, limit: int = 5) -> List[KnowledgeItem]:
+        """Notes the FTS index finds similar to this one (by its title + tags),
+        excluding itself — the graph's automatic edges, no manual linking
+        needed."""
+        with get_db_session() as session:
+            item = session.get(KnowledgeItem, item_id)
+            if not item:
+                return []
+            seed = f"{item.title} {item.tags or ''}"
+        hits = MemoryManager.search_knowledge(seed)
+        return [h for h in hits if h.id != item_id][:max(1, limit)]
 
     # --- Projects ---
 

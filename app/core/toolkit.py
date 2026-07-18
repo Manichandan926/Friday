@@ -150,7 +150,7 @@ def _search_knowledge(query: str) -> str:
     lines = [f"{len(results)} match(es) for '{query}' (most relevant first):"]
     for r in results:
         tagpart = f" #{r.tags}" if r.tags else ""
-        lines.append(f"- [{r.category}] {r.title}: {r.content[:200]}{tagpart}")
+        lines.append(f"- (#{r.id}) [{r.category}] {r.title}: {r.content[:200]}{tagpart}")
     return "\n".join(lines)
 
 
@@ -199,7 +199,53 @@ def _browse_knowledge(category: str = None, tag: str = None) -> str:
     lines = [f"{len(items)} note(s) — {scope}:"]
     for it in items:
         tagpart = f" #{it.tags}" if it.tags else ""
-        lines.append(f"- [{it.category}] {it.title}: {it.content[:160]}{tagpart}")
+        lines.append(f"- (#{it.id}) [{it.category}] {it.title}: {it.content[:160]}{tagpart}")
+    return "\n".join(lines)
+
+
+@_register(
+    "link_knowledge",
+    "Connect two saved notes in the knowledge graph (get their ids from "
+    "search_knowledge / browse_knowledge). relation is a short label like "
+    "'related', 'prerequisite', or 'part_of'.",
+    params={
+        "source_id": {"type": "integer", "description": "Note the link starts from."},
+        "target_id": {"type": "integer", "description": "Note the link points to."},
+        "relation": {"type": "string", "description": "Edge label (default 'related')."},
+    },
+    required=["source_id", "target_id"],
+)
+def _link_knowledge(source_id: int, target_id: int, relation: str = "related") -> str:
+    link = MemoryManager.add_knowledge_link(source_id, target_id, relation)
+    if link is None:
+        return ("Couldn't link: a note can't link to itself, and both ids must "
+                "exist (check with search_knowledge/browse_knowledge).")
+    return f"Linked note #{source_id} —{link.relation}→ #{target_id}."
+
+
+@_register(
+    "get_related_knowledge",
+    "Show notes connected to a given note: explicit graph links first, then "
+    "notes the search index finds similar. Get the id from search_knowledge.",
+    params={"item_id": {"type": "integer", "description": "The note's id."}},
+    required=["item_id"],
+)
+def _get_related_knowledge(item_id: int) -> str:
+    links = MemoryManager.get_knowledge_links(item_id)
+    suggested = MemoryManager.suggest_related_knowledge(item_id)
+    linked_ids = {other.id for other, _rel, _dir in links}
+    suggested = [s for s in suggested if s.id not in linked_ids]
+    if not links and not suggested:
+        return f"Note #{item_id} has no links yet and nothing similar was found."
+    lines = [f"Related to note #{item_id}:"]
+    if links:
+        lines.append("Linked:")
+        for other, rel, direction in links:
+            lines.append(f"  {direction} (#{other.id}) [{other.category}] {other.title} ({rel})")
+    if suggested:
+        lines.append("Similar (by content):")
+        for s in suggested:
+            lines.append(f"  ~ (#{s.id}) [{s.category}] {s.title}")
     return "\n".join(lines)
 
 
